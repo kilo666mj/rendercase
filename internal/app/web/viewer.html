@@ -21,7 +21,7 @@
 <script>
 (function(){
   var dialog=document.getElementById('share-dialog'), artifact=dialog.dataset.artifact, version=Number(dialog.dataset.version);
-  var list=document.getElementById('share-list'), error=document.getElementById('share-error'), result=document.getElementById('share-result'), url=document.getElementById('share-url');
+  var list=document.getElementById('share-list'), error=document.getElementById('share-error'), result=document.getElementById('share-result'), url=document.getElementById('share-url'), currentShareID='';
   function esc(value){var node=document.createElement('span');node.textContent=String(value);return node.innerHTML}
   function summary(share){
     var parts=['Version '+(share.Version||version), share.ViewCount+' view'+(share.ViewCount===1?'':'s')];
@@ -49,13 +49,15 @@
     try{
       var response=await fetch('/api/v1/artifacts/'+encodeURIComponent(artifact)+'/shares',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       var data=await response.json();if(!response.ok)throw new Error(data.error||'Could not create link.');
-      url.value=data.url;result.classList.remove('hidden');await load();
+      currentShareID=data.share_id;url.value=data.url;result.classList.remove('hidden');await load();
     }catch(err){error.textContent=err.message}
   });
   list.addEventListener('click',async function(e){
     var button=e.target.closest('[data-revoke]');if(!button||!confirm('Revoke this share link immediately?'))return;
     error.textContent='';var response=await fetch('/api/v1/shares/'+encodeURIComponent(button.dataset.revoke),{method:'DELETE'});
-    if(!response.ok){var data=await response.json().catch(function(){return {}});error.textContent=data.error||'Could not revoke link.';return}await load();
+    if(!response.ok){var data=await response.json().catch(function(){return {}});error.textContent=data.error||'Could not revoke link.';return}
+    if(button.dataset.revoke===currentShareID){currentShareID='';url.value='';result.classList.add('hidden')}
+    await load();
   });
   document.getElementById('share-copy').addEventListener('click',async function(){await navigator.clipboard.writeText(url.value);this.textContent='Copied';var button=this;setTimeout(function(){button.textContent='Copy'},1500)});
 })();
