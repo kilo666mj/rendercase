@@ -47,7 +47,7 @@ func TestViewerShowsSharingControlsOnlyToOwner(t *testing.T) {
 	if err := tpl.ExecuteTemplate(&rendered, "viewer", data); err != nil {
 		t.Fatal(err)
 	}
-	for _, wanted := range []string{`class="mark-signal"`, `id="share-open"`, `id="share-dialog"`, `data-artifact="a_example"`, `Manage sharing`, `Create a new link`, `Create link for version 3`} {
+	for _, wanted := range []string{`stroke="#67e8f9"`, `fill="#2dd4bf"`, `id="share-open"`, `id="share-dialog"`, `data-artifact="a_example"`, `Manage sharing`, `Create a new link`, `Create link for version 3`} {
 		if !strings.Contains(rendered.String(), wanted) {
 			t.Errorf("owner viewer missing %q", wanted)
 		}
