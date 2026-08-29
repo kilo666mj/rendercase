@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+issuer=${POCKET_ID_URL:-https://id.example.com}
+token=${POCKET_ID_TOKEN:-}
+resource=${RENDERCASE_OAUTH_AUDIENCE:-https://rendercase.example.com/mcp}
+client_id=${RENDERCASE_OIDC_CLIENT_ID:-rendercase}
+allow_cimd=false
+if [[ ${1:-} == "--allow-cimd" ]]; then
+  allow_cimd=true
+elif [[ $# -gt 0 ]]; then
+  echo "usage: $0 [--allow-cimd]" >&2
+  exit 2
+fi
+
+if [[ -z "$token" ]]; then
+  echo "POCKET_ID_TOKEN is required" >&2
+  exit 2
+fi
+
+request() {
+  local method=$1 path=$2 data=${3:-}
+  if [[ -n "$data" ]]; then
+    curl -gfsS -X "$method" -H "X-API-Key: $token" -H 'Content-Type: application/json' --data "$data" "$issuer/api$path"
+  else
+    curl -gfsS -X "$method" -H "X-API-Key: $token" "$issuer/api$path"
+  fi
+}
+
+listing=$(request GET '/apis?pagination[page]=1&pagination[limit]=1000')
+api_id=$(jq -r --arg resource "$resource" '.data[]? | select(.resource == $resource) | .id' <<<"$listing" | head -1)
+if [[ -z "$api_id" ]]; then
+  created=$(request POST /apis "$(jq -cn --arg name Rendercase --arg resource "$resource" '{name:$name,resource:$resource}')")
+  api_id=$(jq -er '.id' <<<"$created")
+fi
+
+updated=$(request PUT "/apis/$api_id/permissions" '{"permissions":[{"key":"rendercase:mcp","name":"Use Rendercase through MCP","description":"List, publish, version, annotate, and share artifacts."}]}')
+permission_id=$(jq -er '.permissions[] | select(.key == "rendercase:mcp") | .id' <<<"$updated")
+
+encoded_client=$(jq -rn --arg value "$client_id" '$value|@uri')
+grant=$(jq -cn --arg permission "$permission_id" '{userDelegatedAccess:true,clientAccess:false,userDelegatedPermissionIds:[$permission],clientPermissionIds:[]}')
+if ! request PUT "/apis/$api_id/clients/$encoded_client" "$grant" >/dev/null 2>&1; then
+  # Pocket ID 2.11-2.13 exposed the same narrow grant through a per-client
+  # endpoint. Preserve this fallback until the deployment is upgraded.
+  legacy_grant=$(jq -cn --arg permission "$permission_id" '{userDelegatedPermissionIds:[$permission],clientPermissionIds:[]}')
+  request PUT "/api-access/$encoded_client" "$legacy_grant" >/dev/null
+fi
+
+if [[ "$allow_cimd" == true ]]; then
+  # This deliberately expands access to every Pocket ID-approved Client ID
+  # Metadata Document. Require the explicit flag so it is never accidental.
+  cimd=$(jq -cn --arg permission "$permission_id" '{enabled:true,permissionIds:[$permission]}')
+  request PUT "/apis/$api_id/cimd-access" "$cimd" >/dev/null
+fi
+
+echo "Pocket ID API configured for $resource"

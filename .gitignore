@@ -1,0 +1,9 @@
+/rendercase
+/rendercase-cli
+/dist/
+/.env
+/.secrets/
+/.rendercase-data/
+coverage.out
+ansible/.secrets/*
+!ansible/.secrets/.gitkeep

@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: rendercase
+      POSTGRES_USER: rendercase
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rendercase"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rendercase:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18100:18100"
+    environment:
+      RENDERCASE_LISTEN: 0.0.0.0:18100
+      RENDERCASE_PUBLIC_URL: ${RENDERCASE_PUBLIC_URL:?set RENDERCASE_PUBLIC_URL in .env}
+      RENDERCASE_CONTENT_URL: ${RENDERCASE_CONTENT_URL:?set RENDERCASE_CONTENT_URL in .env}
+      RENDERCASE_DATABASE_URL: postgres://rendercase:${POSTGRES_PASSWORD}@postgres:5432/rendercase?sslmode=disable
+      RENDERCASE_STORAGE_ROOT: /var/lib/rendercase/artifacts
+      RENDERCASE_COOKIE_SECRET: ${RENDERCASE_COOKIE_SECRET:?set RENDERCASE_COOKIE_SECRET in .env}
+      RENDERCASE_OIDC_ISSUER: ${RENDERCASE_OIDC_ISSUER:?set RENDERCASE_OIDC_ISSUER in .env}
+      RENDERCASE_OIDC_CLIENT_ID: ${RENDERCASE_OIDC_CLIENT_ID:?set RENDERCASE_OIDC_CLIENT_ID in .env}
+      RENDERCASE_OIDC_CLIENT_SECRET: ${RENDERCASE_OIDC_CLIENT_SECRET:-}
+      RENDERCASE_OIDC_REDIRECT_URL: ${RENDERCASE_OIDC_REDIRECT_URL:?set RENDERCASE_OIDC_REDIRECT_URL in .env}
+      RENDERCASE_ADMIN_SUBJECTS: ${RENDERCASE_ADMIN_SUBJECTS:?set RENDERCASE_ADMIN_SUBJECTS in .env}
+      RENDERCASE_OAUTH_AUDIENCE: ${RENDERCASE_OAUTH_AUDIENCE:?set RENDERCASE_OAUTH_AUDIENCE in .env}
+      RENDERCASE_TRUSTED_PROXIES: ${RENDERCASE_TRUSTED_PROXIES:-}
+    volumes:
+      - artifact-data:/var/lib/rendercase/artifacts
+
+volumes:
+  artifact-data:
+  postgres-data:

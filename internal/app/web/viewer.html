@@ -1,0 +1,10 @@
+{{define "viewer"}}
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{.Version.Title}} · Rendercase</title><link rel="stylesheet" href="/static/style.css"><style>html,body{height:100%}.artifact-shell{display:grid;grid-template-rows:auto auto minmax(0,1fr);height:100vh;max-width:none;overflow:hidden;padding:18px 20px}.artifact-shell .top{margin-bottom:0}.artifact-shell .viewer-head{margin:12px 0 10px}.artifact-shell .viewer{height:100%;min-height:0}.inline{display:inline}.link-button{appearance:none;background:none;border:0;color:var(--cyan);cursor:pointer;font:inherit;margin-left:12px;padding:0;text-decoration:underline}@media(max-width:600px){.artifact-shell{padding:12px}.artifact-shell .viewer-head{margin:10px 0 8px}}</style></head>
+<body><main class="shell artifact-shell">
+  <header class="top">{{template "brand" .}}{{if .User}}<div class="session">{{.User.DisplayName}}<form class="inline" method="post" action="/auth/logout"><button class="link-button" type="submit">Sign out</button></form></div>{{end}}</header>
+  <section class="viewer-head"><div><span class="eyebrow">ARTIFACT · VERSION {{.Version.Version}}</span><h1>{{.Version.Title}}</h1></div></section>
+  <iframe class="viewer" title="{{.Version.Title}}" sandbox="allow-scripts allow-forms allow-downloads" referrerpolicy="no-referrer" src="{{.ContentSource}}"></iframe>
+</main></body></html>
+{{end}}
