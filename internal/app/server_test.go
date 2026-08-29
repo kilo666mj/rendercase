@@ -1,6 +1,8 @@
 package app
 
 import (
+	"bytes"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kilo666mj/rendercase/internal/config"
+	"github.com/kilo666mj/rendercase/internal/store"
 )
 
 func TestClientAddressTrustsHeadersOnlyFromConfiguredProxy(t *testing.T) {
@@ -26,6 +29,37 @@ func TestClientAddressTrustsHeadersOnlyFromConfiguredProxy(t *testing.T) {
 	untrusted.Header.Set("CF-Connecting-IP", "203.0.113.8")
 	if got := s.clientAddress(untrusted); got != netip.MustParseAddr("192.0.2.99") {
 		t.Fatalf("untrusted client address = %v", got)
+	}
+}
+
+func TestViewerShowsSharingControlsOnlyToOwner(t *testing.T) {
+	tpl, err := template.ParseFS(webFS, "web/*.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := map[string]any{
+		"User":          &store.User{DisplayName: "Owner"},
+		"Version":       store.Version{ArtifactID: "a_example", Version: 3, Title: "Example"},
+		"ContentSource": "https://content.example/t/ticket/a_example/3/index.html",
+		"CanShare":      true,
+	}
+	var rendered bytes.Buffer
+	if err := tpl.ExecuteTemplate(&rendered, "viewer", data); err != nil {
+		t.Fatal(err)
+	}
+	for _, wanted := range []string{`id="share-open"`, `id="share-dialog"`, `data-artifact="a_example"`, `Create link for version 3`} {
+		if !strings.Contains(rendered.String(), wanted) {
+			t.Errorf("owner viewer missing %q", wanted)
+		}
+	}
+
+	data["CanShare"] = false
+	rendered.Reset()
+	if err := tpl.ExecuteTemplate(&rendered, "viewer", data); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rendered.String(), `id="share-open"`) || strings.Contains(rendered.String(), `id="share-dialog"`) {
+		t.Fatal("sharing controls rendered for a non-owner")
 	}
 }
 

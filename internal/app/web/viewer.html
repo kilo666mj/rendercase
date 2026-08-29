@@ -1,10 +1,63 @@
 {{define "viewer"}}
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{.Version.Title}} · Rendercase</title><link rel="stylesheet" href="/static/style.css"><style>html,body{height:100%}.artifact-shell{display:grid;grid-template-rows:auto auto minmax(0,1fr);height:100vh;max-width:none;overflow:hidden;padding:18px 20px}.artifact-shell .top{margin-bottom:0}.artifact-shell .viewer-head{margin:12px 0 10px}.artifact-shell .viewer{height:100%;min-height:0}.inline{display:inline}.link-button{appearance:none;background:none;border:0;color:var(--cyan);cursor:pointer;font:inherit;margin-left:12px;padding:0;text-decoration:underline}@media(max-width:600px){.artifact-shell{padding:12px}.artifact-shell .viewer-head{margin:10px 0 8px}}</style></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{.Version.Title}} · Rendercase</title><link rel="stylesheet" href="/static/style.css"><style>html,body{height:100%}.artifact-shell{display:grid;grid-template-rows:auto auto minmax(0,1fr);height:100vh;max-width:none;overflow:hidden;padding:18px 20px}.artifact-shell .top{margin-bottom:0}.artifact-shell .viewer-head{margin:12px 0 10px}.artifact-shell .viewer{height:100%;min-height:0}.inline{display:inline}.link-button{appearance:none;background:none;border:0;color:var(--cyan);cursor:pointer;font:inherit;margin-left:12px;padding:0;text-decoration:underline}.viewer-actions{display:flex;gap:10px}.share-dialog{background:var(--panel);border:1px solid var(--line-hot);border-radius:16px;color:var(--text);max-width:620px;padding:0;width:calc(100% - 28px);box-shadow:var(--shadow)}.share-dialog::backdrop{background:rgba(0,0,0,.72)}.share-panel{padding:22px}.share-head{align-items:start;display:flex;justify-content:space-between;gap:20px}.share-head h2{margin:0}.icon-button{appearance:none;background:none;border:0;color:var(--muted);cursor:pointer;font-size:24px;line-height:1}.share-form{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:20px}.share-form label{color:var(--muted);display:grid;font-size:12px;gap:5px}.share-form input{background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--text);font:inherit;padding:9px}.share-form .form-actions,.share-result,.share-list-wrap{grid-column:1/-1}.share-result{background:rgba(45,212,191,.08);border:1px solid var(--line-hot);border-radius:10px;margin-top:15px;padding:12px}.share-result-row{display:flex;gap:8px}.share-result input{min-width:0;width:100%}.share-list-wrap{border-top:1px solid var(--line);margin-top:20px;padding-top:16px}.share-list{display:grid;gap:8px}.share-item{align-items:center;background:rgba(255,255,255,.025);border:1px solid var(--line);border-radius:9px;display:flex;justify-content:space-between;gap:12px;padding:10px}.share-item p{color:var(--muted);font-size:12px;margin:2px 0 0}.danger-button{appearance:none;background:transparent;border:1px solid rgba(251,113,133,.35);border-radius:8px;color:var(--danger);cursor:pointer;padding:7px 10px}.form-error{color:var(--danger);min-height:1.5em}.hidden{display:none}@media(max-width:600px){.artifact-shell{padding:12px}.artifact-shell .viewer-head{align-items:center;flex-direction:row;margin:10px 0 8px}.share-form{grid-template-columns:1fr}.viewer-head h1{font-size:19px}}</style></head>
 <body><main class="shell artifact-shell">
   <header class="top">{{template "brand" .}}{{if .User}}<div class="session">{{.User.DisplayName}}<form class="inline" method="post" action="/auth/logout"><button class="link-button" type="submit">Sign out</button></form></div>{{end}}</header>
-  <section class="viewer-head"><div><span class="eyebrow">ARTIFACT · VERSION {{.Version.Version}}</span><h1>{{.Version.Title}}</h1></div></section>
+  <section class="viewer-head"><div><span class="eyebrow">ARTIFACT · VERSION {{.Version.Version}}</span><h1>{{.Version.Title}}</h1></div>{{if .CanShare}}<div class="viewer-actions"><button class="button" id="share-open" type="button">Share</button></div>{{end}}</section>
   <iframe class="viewer" title="{{.Version.Title}}" sandbox="allow-scripts allow-forms allow-downloads" referrerpolicy="no-referrer" src="{{.ContentSource}}"></iframe>
-</main></body></html>
+</main>{{if .CanShare}}
+<dialog class="share-dialog" id="share-dialog" data-artifact="{{.Version.ArtifactID}}" data-version="{{.Version.Version}}"><div class="share-panel">
+  <div class="share-head"><div><span class="eyebrow">CAPABILITY LINKS</span><h2>Share this artifact</h2></div><button class="icon-button" id="share-close" type="button" aria-label="Close">&times;</button></div>
+  <form class="share-form" id="share-form">
+    <label>Expires (optional)<input id="share-expiry" type="datetime-local"></label>
+    <label>Maximum views (optional)<input id="share-limit" type="number" min="1" step="1" placeholder="Unlimited"></label>
+    <div class="form-actions"><button class="button" type="submit">Create link for version {{.Version.Version}}</button></div>
+    <div class="form-error" id="share-error" role="alert"></div>
+  </form>
+  <div class="share-result hidden" id="share-result"><span class="eyebrow">NEW LINK · SHOWN ONCE</span><div class="share-result-row"><input id="share-url" readonly aria-label="Share URL"><button class="button" id="share-copy" type="button">Copy</button></div></div>
+  <div class="share-list-wrap"><h3>Existing links</h3><p class="session">For security, existing capability URLs cannot be recovered. You can revoke them and create a replacement.</p><div class="share-list" id="share-list"><span class="session">Loading…</span></div></div>
+</div></dialog>
+<script>
+(function(){
+  var dialog=document.getElementById('share-dialog'), artifact=dialog.dataset.artifact, version=Number(dialog.dataset.version);
+  var list=document.getElementById('share-list'), error=document.getElementById('share-error'), result=document.getElementById('share-result'), url=document.getElementById('share-url');
+  function esc(value){var node=document.createElement('span');node.textContent=String(value);return node.innerHTML}
+  function summary(share){
+    var parts=['Version '+(share.Version||version), share.ViewCount+' view'+(share.ViewCount===1?'':'s')];
+    if(share.ViewLimit)parts[1]+=' / '+share.ViewLimit;
+    if(share.ExpiresAt)parts.push('expires '+new Date(share.ExpiresAt).toLocaleString());
+    if((share.ExpiresAt&&new Date(share.ExpiresAt)<=new Date())||(share.ViewLimit&&share.ViewCount>=share.ViewLimit))parts.push('inactive');
+    return parts.join(' · ');
+  }
+  async function load(){
+    list.innerHTML='<span class="session">Loading…</span>';
+    var response=await fetch('/api/v1/artifacts/'+encodeURIComponent(artifact)+'/shares');
+    if(!response.ok)throw new Error('Could not load existing links.');
+    var shares=(await response.json()).shares||[];
+    if(!shares.length){list.innerHTML='<span class="session">No active links.</span>';return}
+    list.innerHTML=shares.map(function(s){return '<div class="share-item"><div><strong>'+esc(s.ID)+'</strong><p>'+esc(summary(s))+'</p></div><button class="danger-button" data-revoke="'+esc(s.ID)+'" type="button">Revoke</button></div>'}).join('');
+  }
+  document.getElementById('share-open').addEventListener('click',function(){dialog.showModal();load().catch(function(e){error.textContent=e.message})});
+  document.getElementById('share-close').addEventListener('click',function(){dialog.close()});
+  dialog.addEventListener('click',function(e){if(e.target===dialog)dialog.close()});
+  document.getElementById('share-form').addEventListener('submit',async function(e){
+    e.preventDefault();error.textContent='';result.classList.add('hidden');
+    var body={version:version}, expiry=document.getElementById('share-expiry').value, limit=document.getElementById('share-limit').value;
+    if(expiry)body.expires_at=new Date(expiry).toISOString();
+    if(limit)body.view_limit=Number(limit);
+    try{
+      var response=await fetch('/api/v1/artifacts/'+encodeURIComponent(artifact)+'/shares',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      var data=await response.json();if(!response.ok)throw new Error(data.error||'Could not create link.');
+      url.value=data.url;result.classList.remove('hidden');await load();
+    }catch(err){error.textContent=err.message}
+  });
+  list.addEventListener('click',async function(e){
+    var button=e.target.closest('[data-revoke]');if(!button||!confirm('Revoke this share link immediately?'))return;
+    error.textContent='';var response=await fetch('/api/v1/shares/'+encodeURIComponent(button.dataset.revoke),{method:'DELETE'});
+    if(!response.ok){var data=await response.json().catch(function(){return {}});error.textContent=data.error||'Could not revoke link.';return}await load();
+  });
+  document.getElementById('share-copy').addEventListener('click',async function(){await navigator.clipboard.writeText(url.value);this.textContent='Copied';var button=this;setTimeout(function(){button.textContent='Copy'},1500)});
+})();
+</script>{{end}}</body></html>
 {{end}}

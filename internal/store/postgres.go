@@ -70,6 +70,26 @@ type Share struct {
 	RevokedAt                 *time.Time
 }
 
+func (d *DB) ListShares(ctx context.Context, artifactID, userID string) ([]Share, error) {
+	rows, err := d.Pool.Query(ctx, `SELECT s.id,s.artifact_id,s.version,s.created_by,s.expires_at,s.view_limit,s.view_count,s.revoked_at
+		FROM shares s JOIN artifacts a ON a.id=s.artifact_id
+		WHERE s.artifact_id=$1 AND a.owner_id=$2 AND a.deleted_at IS NULL AND s.revoked_at IS NULL
+		ORDER BY s.created_at DESC`, artifactID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Share
+	for rows.Next() {
+		var s Share
+		if err := rows.Scan(&s.ID, &s.ArtifactID, &s.Version, &s.CreatedBy, &s.ExpiresAt, &s.ViewLimit, &s.ViewCount, &s.RevokedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 func Open(ctx context.Context, databaseURL string) (*DB, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
