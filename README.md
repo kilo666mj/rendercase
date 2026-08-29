@@ -19,6 +19,16 @@ Rendercase is intended to sit behind an HTTPS reverse proxy. It requires two
 hostnames, PostgreSQL, and an OIDC provider. There is no hosted Rendercase
 service and artifact files stay on storage you control.
 
+## Screenshots
+
+### Artifact viewer
+
+![Rendercase artifact viewer showing a versioned interactive artifact](docs/images/artifact-viewer.png)
+
+### Sharing management
+
+![Rendercase sharing dialog with expiration, view limits, and revocation controls](docs/images/manage-sharing.png)
+
 ## Quick start with Docker Compose
 
 Prerequisites:
