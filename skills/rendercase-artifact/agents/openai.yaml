@@ -1,0 +1,4 @@
+interface:
+  display_name: "Rendercase Artifact"
+  short_description: "Author and publish visual Rendercase artifacts"
+  default_prompt: "Use $rendercase-artifact to create and publish a visual architecture artifact."

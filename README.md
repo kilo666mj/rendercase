@@ -122,6 +122,29 @@ Available MCP tools:
 - `rendercase_share`
 - `rendercase_revoke_share`
 
+## Install the artifact-authoring skill
+
+The repository includes a Codex skill for creating responsive HTML artifacts,
+choosing suitable diagram and table forms, validating bundles for accidental
+secrets, and publishing directly through the Rendercase MCP.
+
+Ask Codex:
+
+```text
+Install the skill from https://github.com/kilo666mj/rendercase/tree/main/skills/rendercase-artifact
+```
+
+Codex's skill installer places it under `~/.codex/skills/rendercase-artifact`.
+For a manual installation from an existing clone:
+
+```sh
+mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
+cp -R skills/rendercase-artifact "${CODEX_HOME:-$HOME/.codex}/skills/"
+```
+
+The skill becomes available on the next Codex turn. It does not configure the
+Rendercase MCP connection; connect the MCP endpoint above first.
+
 MCP clients that cannot present a required TLS client certificate can use the
 included loopback-only bridge:
 
