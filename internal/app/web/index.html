@@ -1,7 +1,7 @@
 {{define "index"}}
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rendercase</title><link rel="stylesheet" href="/static/style.css?v=20260829-2"><style>.inline{display:inline}.link-button{appearance:none;background:none;border:0;color:var(--cyan);cursor:pointer;font:inherit;margin-left:12px;padding:0;text-decoration:underline}</style></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rendercase</title><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/style.css?v=20260829-2"><style>.inline{display:inline}.link-button{appearance:none;background:none;border:0;color:var(--cyan);cursor:pointer;font:inherit;margin-left:12px;padding:0;text-decoration:underline}</style></head>
 <body><main class="shell">
   <header class="top">{{template "brand" .}}<div class="session">{{.User.DisplayName}}<form class="inline" method="post" action="/auth/logout"><button class="link-button" type="submit">Sign out</button></form></div></header>
   <section class="hero"><span class="eyebrow">PRIVATE ARTIFACT PLANE</span><h1>Make it tangible. <span>Keep it yours.</span></h1><p>Interactive artifacts published by you and your tools, hosted entirely on your infrastructure.</p></section>

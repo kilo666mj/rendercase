@@ -63,6 +63,45 @@ func TestViewerShowsSharingControlsOnlyToOwner(t *testing.T) {
 	}
 }
 
+func TestTemplatesIncludeFavicon(t *testing.T) {
+	tpl, err := template.ParseFS(webFS, "web/*.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		data map[string]any
+	}{
+		{name: "index", data: map[string]any{"User": &store.User{}}},
+		{name: "login", data: map[string]any{}},
+		{name: "viewer", data: map[string]any{"Version": store.Version{}}},
+	} {
+		var rendered bytes.Buffer
+		if err := tpl.ExecuteTemplate(&rendered, test.name, test.data); err != nil {
+			t.Fatalf("render %s: %v", test.name, err)
+		}
+		if !strings.Contains(rendered.String(), `<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">`) {
+			t.Errorf("%s template does not include the favicon", test.name)
+		}
+	}
+}
+
+func TestFavicon(t *testing.T) {
+	response := httptest.NewRecorder()
+	(&Server{}).favicon(response, httptest.NewRequest(http.MethodGet, "/static/favicon.svg", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+	if got := response.Header().Get("Content-Type"); got != "image/svg+xml" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	for _, wanted := range []string{`stroke="#67e8f9"`, `fill="#2dd4bf"`, `fill="#a78bfa"`} {
+		if !strings.Contains(response.Body.String(), wanted) {
+			t.Errorf("favicon missing %q", wanted)
+		}
+	}
+}
+
 func TestUploadTokenIgnoresQueryString(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPut, "https://rendercase.example/upload?token=logged-secret", nil)
 	if got := uploadToken(request); got != "" {

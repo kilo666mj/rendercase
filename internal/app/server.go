@@ -71,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 	mainMux.HandleFunc("GET /readyz", s.ready)
 	mainMux.HandleFunc("GET /.well-known/oauth-protected-resource", s.oauthProtectedResource)
 	mainMux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", s.oauthProtectedResource)
+	mainMux.HandleFunc("GET /static/favicon.svg", s.favicon)
 	mainMux.HandleFunc("GET /static/style.css", s.style)
 	mainMux.HandleFunc("GET /auth/login", s.login)
 	mainMux.HandleFunc("GET /api/v1/auth/oidc/callback", s.callback)
@@ -160,6 +161,13 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 func (s *Server) style(w http.ResponseWriter, _ *http.Request) {
 	b, _ := webFS.ReadFile("web/style.css")
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	_, _ = w.Write(b)
+}
+
+func (s *Server) favicon(w http.ResponseWriter, _ *http.Request) {
+	b, _ := webFS.ReadFile("web/favicon.svg")
+	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	_, _ = w.Write(b)
 }
