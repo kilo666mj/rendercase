@@ -100,6 +100,22 @@ func TestRejectsTraversalAndMissingEntrypoint(t *testing.T) {
 	}
 }
 
+func TestContainedPathRejectsTraversalWithoutRejectingDoubleDots(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"../escape", "dir/../../escape", `..\\escape`} {
+		cleaned, err := cleanRelative(name)
+		if err == nil {
+			if _, err := containedPath(root, cleaned); err == nil {
+				t.Errorf("containedPath accepted %q", name)
+			}
+		}
+	}
+	want := filepath.Join(root, "assets", "bundle..js")
+	if got, err := containedPath(root, "assets/bundle..js"); err != nil || got != want {
+		t.Fatalf("legitimate double-dot path = %q, %v; want %q", got, err, want)
+	}
+}
+
 func TestStageZIPDoesNotClassifyFilesystemErrorsAsValidation(t *testing.T) {
 	store := Store{Root: t.TempDir(), MaxBundleBytes: 1024, MaxFiles: 10}
 	data := zipBytes(t, map[string]string{"index.html": "ok"})

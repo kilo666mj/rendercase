@@ -153,7 +153,10 @@ func (s Store) StageZIP(ctx context.Context, uploadID, title, entrypoint string,
 		if zf.UncompressedSize64 > uint64(remaining) {
 			return Staged{}, validationErrorf("expanded bundle exceeds %d bytes", s.MaxBundleBytes)
 		}
-		destination := filepath.Join(filesDir, filepath.FromSlash(name))
+		destination, err := containedPath(filesDir, name)
+		if err != nil {
+			return Staged{}, validationErrorf("invalid zip path %q: %v", zf.Name, err)
+		}
 		if err := os.MkdirAll(filepath.Dir(destination), 0750); err != nil {
 			return Staged{}, err
 		}
@@ -307,4 +310,13 @@ func cleanRelative(name string) (string, error) {
 		return "", errors.New("path escapes bundle")
 	}
 	return cleaned, nil
+}
+
+func containedPath(root, relative string) (string, error) {
+	destination := filepath.Join(root, filepath.FromSlash(relative))
+	rel, err := filepath.Rel(root, destination)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", errors.New("path escapes bundle")
+	}
+	return destination, nil
 }
