@@ -48,6 +48,11 @@ type userContextKey struct{}
 type requestIDContextKey struct{}
 type remoteAddressContextKey struct{}
 
+const (
+	sessionCookieName = "__Host-rendercase_session"
+	shareCookieName   = "__Host-rendercase_share"
+)
+
 func New(ctx context.Context, cfg config.Config, db *store.DB, blobs blob.Store, logger *slog.Logger) (*Server, error) {
 	provider, err := oidc.NewProvider(ctx, cfg.OIDCIssuer)
 	if err != nil {
@@ -286,7 +291,7 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	setCookie(w, "rendercase_session", plain, expires, true)
+	setCookie(w, sessionCookieName, plain, expires, true)
 	http.Redirect(w, r, returnPath, http.StatusFound)
 }
 
@@ -295,10 +300,10 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, strings.TrimRight(s.cfg.PublicURL.String(), "/")+"/cdn-cgi/access/logout", http.StatusSeeOther)
 		return
 	}
-	if c, err := r.Cookie("rendercase_session"); err == nil {
+	if c, err := r.Cookie(sessionCookieName); err == nil {
 		_ = s.db.DeleteSession(r.Context(), securetoken.Hash(c.Value))
 	}
-	setCookie(w, "rendercase_session", "", time.Unix(0, 0), true)
+	setCookie(w, sessionCookieName, "", time.Unix(0, 0), true)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -346,7 +351,7 @@ func (s *Server) validOrigin(r *http.Request) bool {
 }
 
 func (s *Server) sessionUser(r *http.Request) (store.User, error) {
-	c, err := r.Cookie("rendercase_session")
+	c, err := r.Cookie(sessionCookieName)
 	if err != nil {
 		return store.User{}, store.ErrNotFound
 	}
@@ -389,7 +394,7 @@ func (s *Server) viewer(w http.ResponseWriter, r *http.Request) {
 		}
 		u = &session
 		canShare = a.Role == "owner"
-	} else if c, err := r.Cookie("rendercase_share"); err == nil {
+	} else if c, err := r.Cookie(shareCookieName); err == nil {
 		share, err := s.db.ShareBySession(r.Context(), securetoken.Hash(c.Value))
 		if err != nil || share.ArtifactID != artifactID {
 			http.NotFound(w, r)
@@ -504,7 +509,11 @@ func (s *Server) putUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	staged, err := s.blobs.StageZIP(r.Context(), upload.ID, upload.Title, upload.Entrypoint, http.MaxBytesReader(w, r.Body, s.cfg.MaxBundleBytes+1))
 	if err != nil {
-		writeError(w, 400, err.Error())
+		if blob.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+		} else {
+			s.fail(w, r, err)
+		}
 		return
 	}
 	manifest, err := json.Marshal(staged.Manifest)
@@ -529,7 +538,11 @@ func (s *Server) commitUpload(w http.ResponseWriter, r *http.Request) {
 	u := currentUser(r)
 	a, v, err := s.commitForUser(r.Context(), u, r.PathValue("upload"), in.UploadToken)
 	if err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+		if errors.Is(err, errUploadNotFound) || errors.Is(err, errUploadNotStaged) {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			s.fail(w, r, err)
+		}
 		return
 	}
 	s.audit(r, u.ID, "", a.ID, "artifact.publish", map[string]any{"version": v.Version, "upload_id": r.PathValue("upload")})
@@ -613,7 +626,7 @@ func (s *Server) exchangeShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "", share.ID, share.ArtifactID, "share.view", map[string]any{"view_count": share.ViewCount})
-	setCookie(w, "rendercase_share", plain, expires, true)
+	setCookie(w, shareCookieName, plain, expires, true)
 	http.Redirect(w, r, "/a/"+share.ArtifactID, http.StatusFound)
 }
 func (s *Server) revokeShare(w http.ResponseWriter, r *http.Request) {

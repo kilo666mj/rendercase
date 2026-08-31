@@ -355,10 +355,15 @@ func versionForMCP(v store.Version) (mcpVersion, error) {
 	}, nil
 }
 
+var (
+	errUploadNotFound  = errors.New("upload not found or expired")
+	errUploadNotStaged = errors.New("upload has no staged bundle")
+)
+
 func (s *Server) commitForUser(ctx context.Context, user store.User, uploadID, uploadToken string) (store.Artifact, store.Version, error) {
 	upload, err := s.db.UploadByToken(ctx, uploadID, securetoken.Hash(uploadToken))
 	if err != nil || upload.CreatedBy != user.ID {
-		return store.Artifact{}, store.Version{}, errors.New("upload not found or expired")
+		return store.Artifact{}, store.Version{}, errUploadNotFound
 	}
 	if upload.CommittedAt != nil && upload.CommittedVersion != nil && upload.ArtifactID != "" {
 		a, artifactErr := s.db.ArtifactForUser(ctx, upload.ArtifactID, user.ID)
@@ -369,7 +374,7 @@ func (s *Server) commitForUser(ctx context.Context, user store.User, uploadID, u
 		return a, v, versionErr
 	}
 	if string(upload.StagedManifest) == "null" {
-		return store.Artifact{}, store.Version{}, errors.New("upload has no staged bundle")
+		return store.Artifact{}, store.Version{}, errUploadNotStaged
 	}
 	var manifest blob.Manifest
 	if err = json.Unmarshal(upload.StagedManifest, &manifest); err != nil {

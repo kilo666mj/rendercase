@@ -113,6 +113,39 @@ func TestUploadTokenIgnoresQueryString(t *testing.T) {
 	}
 }
 
+func TestSecurityCookiesUseHostPrefix(t *testing.T) {
+	for _, name := range []string{sessionCookieName, shareCookieName} {
+		response := httptest.NewRecorder()
+		setCookie(response, name, "secret", time.Now().Add(time.Hour), true)
+		cookies := response.Result().Cookies()
+		if len(cookies) != 1 {
+			t.Fatalf("%s: got %d cookies", name, len(cookies))
+		}
+		cookie := cookies[0]
+		if !strings.HasPrefix(cookie.Name, "__Host-") || cookie.Path != "/" || cookie.Domain != "" || !cookie.Secure {
+			t.Fatalf("insecure cookie attributes: %+v", cookie)
+		}
+	}
+}
+
+func TestShareListBuildsDynamicContentWithDOMAPIs(t *testing.T) {
+	source, err := webFS.ReadFile("web/viewer.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, forbidden := range []string{"function esc(", "list.innerHTML", `data-revoke="'+`} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("share list retains unsafe HTML construction %q", forbidden)
+		}
+	}
+	for _, required := range []string{"id.textContent=String(s.ID)", "description.textContent=summary(s)", "button.dataset.revoke=String(s.ID)"} {
+		if !strings.Contains(text, required) {
+			t.Errorf("share list missing DOM assignment %q", required)
+		}
+	}
+}
+
 func TestSafeReturnRejectsExternalURLForms(t *testing.T) {
 	for _, value := range []string{"", "https://evil.example", "//evil.example", "/\\evil.example", "/path\r\nLocation: https://evil.example"} {
 		if got := safeReturn(value); got != "/" {

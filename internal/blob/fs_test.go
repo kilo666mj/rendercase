@@ -91,10 +91,25 @@ func TestRejectsTraversalAndMissingEntrypoint(t *testing.T) {
 	data := zipBytes(t, map[string]string{"../escape": "bad", "other.html": "ok"})
 	if _, err := store.StageZIP(context.Background(), "upload1", "Bad", "index.html", bytes.NewReader(data)); err == nil {
 		t.Fatal("traversal bundle accepted")
+	} else if !IsValidationError(err) {
+		t.Fatalf("traversal error is not safe validation error: %T: %v", err, err)
 	}
 	data = zipBytes(t, map[string]string{"other.html": "ok"})
 	if _, err := store.StageZIP(context.Background(), "upload2", "Bad", "index.html", bytes.NewReader(data)); err == nil {
 		t.Fatal("missing entrypoint accepted")
+	}
+}
+
+func TestStageZIPDoesNotClassifyFilesystemErrorsAsValidation(t *testing.T) {
+	store := Store{Root: t.TempDir(), MaxBundleBytes: 1024, MaxFiles: 10}
+	data := zipBytes(t, map[string]string{"index.html": "ok"})
+	if _, err := store.StageZIP(context.Background(), "upload1", "First", "index.html", bytes.NewReader(data)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.StageZIP(context.Background(), "upload1", "Second", "index.html", bytes.NewReader(data)); err == nil {
+		t.Fatal("duplicate staging directory accepted")
+	} else if IsValidationError(err) {
+		t.Fatalf("filesystem error exposed as validation error: %v", err)
 	}
 }
 

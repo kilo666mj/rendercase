@@ -23,7 +23,7 @@
 (function(){
   var dialog=document.getElementById('share-dialog'), artifact=dialog.dataset.artifact, version=Number(dialog.dataset.version);
   var list=document.getElementById('share-list'), error=document.getElementById('share-error'), result=document.getElementById('share-result'), url=document.getElementById('share-url'), currentShareID='';
-  function esc(value){var node=document.createElement('span');node.textContent=String(value);return node.innerHTML}
+  function status(text){var node=document.createElement('span');node.className='session';node.textContent=text;list.replaceChildren(node)}
   function summary(share){
     var parts=['Version '+(share.Version||version), share.ViewCount+' view'+(share.ViewCount===1?'':'s')];
     if(share.ViewLimit)parts[1]+=' / '+share.ViewLimit;
@@ -32,12 +32,18 @@
     return parts.join(' · ');
   }
   async function load(){
-    list.innerHTML='<span class="session">Loading…</span>';
+    status('Loading…');
     var response=await fetch('/api/v1/artifacts/'+encodeURIComponent(artifact)+'/shares');
     if(!response.ok)throw new Error('Could not load existing links.');
     var shares=(await response.json()).shares||[];
-    if(!shares.length){list.innerHTML='<span class="session">No active links.</span>';return}
-    list.innerHTML=shares.map(function(s){return '<div class="share-item"><div><strong>'+esc(s.ID)+'</strong><p>'+esc(summary(s))+'</p></div><button class="danger-button" data-revoke="'+esc(s.ID)+'" type="button">Revoke</button></div>'}).join('');
+    if(!shares.length){status('No active links.');return}
+    list.replaceChildren();
+    shares.forEach(function(s){
+      var item=document.createElement('div'), details=document.createElement('div'), id=document.createElement('strong'), description=document.createElement('p'), button=document.createElement('button');
+      item.className='share-item';id.textContent=String(s.ID);description.textContent=summary(s);
+      button.className='danger-button';button.dataset.revoke=String(s.ID);button.type='button';button.textContent='Revoke';
+      details.append(id,description);item.append(details,button);list.append(item);
+    });
   }
   document.getElementById('share-open').addEventListener('click',function(){dialog.showModal();load().catch(function(e){error.textContent=e.message})});
   document.getElementById('share-close').addEventListener('click',function(){dialog.close()});

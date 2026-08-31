@@ -47,6 +47,22 @@ type Staged struct {
 	Bytes     int64
 }
 
+// ValidationError reports a bundle problem that is safe to return to the
+// uploader. All other StageZIP errors are operational details and must remain
+// server-side.
+type ValidationError struct{ Message string }
+
+func (e *ValidationError) Error() string { return e.Message }
+
+func validationErrorf(format string, args ...any) error {
+	return &ValidationError{Message: fmt.Sprintf(format, args...)}
+}
+
+func IsValidationError(err error) bool {
+	var validationErr *ValidationError
+	return errors.As(err, &validationErr)
+}
+
 func (s Store) Init() error {
 	if s.Root == "" || s.MaxBundleBytes <= 0 || s.MaxFiles <= 0 {
 		return errors.New("invalid blob store configuration")
@@ -65,7 +81,7 @@ func (s Store) StageZIP(ctx context.Context, uploadID, title, entrypoint string,
 	}
 	entrypoint, err := cleanRelative(entrypoint)
 	if err != nil {
-		return Staged{}, fmt.Errorf("entrypoint: %w", err)
+		return Staged{}, validationErrorf("invalid entrypoint: %v", err)
 	}
 	stageDir := filepath.Join(s.Root, ".uploads", uploadID)
 	if err := os.Mkdir(stageDir, 0750); err != nil {
@@ -92,16 +108,16 @@ func (s Store) StageZIP(ctx context.Context, uploadID, title, entrypoint string,
 		return Staged{}, closeErr
 	}
 	if written > s.MaxBundleBytes {
-		return Staged{}, fmt.Errorf("bundle exceeds %d bytes", s.MaxBundleBytes)
+		return Staged{}, validationErrorf("bundle exceeds %d bytes", s.MaxBundleBytes)
 	}
 
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
-		return Staged{}, fmt.Errorf("open zip: %w", err)
+		return Staged{}, validationErrorf("invalid zip archive: %v", err)
 	}
 	defer zr.Close()
 	if len(zr.File) > s.MaxFiles {
-		return Staged{}, fmt.Errorf("bundle contains more than %d files", s.MaxFiles)
+		return Staged{}, validationErrorf("bundle contains more than %d files", s.MaxFiles)
 	}
 
 	filesDir := filepath.Join(stageDir, "files")
@@ -118,16 +134,16 @@ func (s Store) StageZIP(ctx context.Context, uploadID, title, entrypoint string,
 		}
 		name, err := cleanRelative(zf.Name)
 		if err != nil {
-			return Staged{}, fmt.Errorf("zip path %q: %w", zf.Name, err)
+			return Staged{}, validationErrorf("invalid zip path %q: %v", zf.Name, err)
 		}
 		if zf.FileInfo().IsDir() {
 			continue
 		}
 		if zf.Mode()&os.ModeSymlink != 0 || !zf.Mode().IsRegular() {
-			return Staged{}, fmt.Errorf("zip path %q is not a regular file", zf.Name)
+			return Staged{}, validationErrorf("zip path %q is not a regular file", zf.Name)
 		}
 		if _, exists := seen[name]; exists {
-			return Staged{}, fmt.Errorf("duplicate zip path %q", name)
+			return Staged{}, validationErrorf("duplicate zip path %q", name)
 		}
 		seen[name] = struct{}{}
 		if name == entrypoint {
@@ -135,7 +151,7 @@ func (s Store) StageZIP(ctx context.Context, uploadID, title, entrypoint string,
 		}
 		remaining := s.MaxBundleBytes - total
 		if zf.UncompressedSize64 > uint64(remaining) {
-			return Staged{}, fmt.Errorf("expanded bundle exceeds %d bytes", s.MaxBundleBytes)
+			return Staged{}, validationErrorf("expanded bundle exceeds %d bytes", s.MaxBundleBytes)
 		}
 		destination := filepath.Join(filesDir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(destination), 0750); err != nil {
@@ -158,10 +174,10 @@ func (s Store) StageZIP(ctx context.Context, uploadID, title, entrypoint string,
 			return Staged{}, errors.Join(copyErr, sourceErr, destErr)
 		}
 		if n > remaining {
-			return Staged{}, fmt.Errorf("expanded bundle exceeds %d bytes", s.MaxBundleBytes)
+			return Staged{}, validationErrorf("expanded bundle exceeds %d bytes", s.MaxBundleBytes)
 		}
 		if uint64(n) != zf.UncompressedSize64 {
-			return Staged{}, fmt.Errorf("zip path %q has inconsistent uncompressed size", zf.Name)
+			return Staged{}, validationErrorf("zip path %q has inconsistent uncompressed size", zf.Name)
 		}
 		total += n
 		contentType := mime.TypeByExtension(strings.ToLower(path.Ext(name)))
@@ -173,7 +189,7 @@ func (s Store) StageZIP(ctx context.Context, uploadID, title, entrypoint string,
 		})
 	}
 	if !entryFound {
-		return Staged{}, fmt.Errorf("entrypoint %q is not present", entrypoint)
+		return Staged{}, validationErrorf("entrypoint %q is not present", entrypoint)
 	}
 	sort.Slice(manifest.Files, func(i, j int) bool { return manifest.Files[i].Path < manifest.Files[j].Path })
 	manifestJSON, err := json.Marshal(manifest)
