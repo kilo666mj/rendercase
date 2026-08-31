@@ -18,7 +18,13 @@ type Config struct {
 	PublicURL           *url.URL
 	ContentURL          *url.URL
 	DatabaseURL         string
+	StorageBackend      string
 	StorageRoot         string
+	S3Bucket            string
+	S3Prefix            string
+	S3Region            string
+	S3Endpoint          string
+	S3UsePathStyle      bool
 	CookieSecret        []byte
 	OIDCIssuer          string
 	OIDCClientID        string
@@ -44,6 +50,8 @@ type Config struct {
 const (
 	AuthModeOIDC             = "oidc"
 	AuthModeCloudflareAccess = "cloudflare_access"
+	StorageBackendFilesystem = "filesystem"
+	StorageBackendS3         = "s3"
 )
 
 func Load() (Config, error) {
@@ -75,13 +83,23 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("RENDERCASE_TRUSTED_PROXIES: %w", err)
 	}
+	s3UsePathStyle, err := envBool("RENDERCASE_S3_USE_PATH_STYLE", false)
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		AuthMode:            envDefault("RENDERCASE_AUTH_MODE", AuthModeOIDC),
 		ListenAddr:          envDefault("RENDERCASE_LISTEN", "127.0.0.1:18100"),
 		PublicURL:           publicURL,
 		ContentURL:          contentURL,
 		DatabaseURL:         strings.TrimSpace(os.Getenv("RENDERCASE_DATABASE_URL")),
+		StorageBackend:      envDefault("RENDERCASE_STORAGE_BACKEND", StorageBackendFilesystem),
 		StorageRoot:         envDefault("RENDERCASE_STORAGE_ROOT", "/var/lib/rendercase/artifacts"),
+		S3Bucket:            strings.TrimSpace(os.Getenv("RENDERCASE_S3_BUCKET")),
+		S3Prefix:            strings.Trim(strings.TrimSpace(os.Getenv("RENDERCASE_S3_PREFIX")), "/"),
+		S3Region:            envDefault("RENDERCASE_S3_REGION", "us-east-1"),
+		S3Endpoint:          strings.TrimRight(strings.TrimSpace(os.Getenv("RENDERCASE_S3_ENDPOINT")), "/"),
+		S3UsePathStyle:      s3UsePathStyle,
 		CookieSecret:        secret,
 		OIDCIssuer:          strings.TrimRight(strings.TrimSpace(os.Getenv("RENDERCASE_OIDC_ISSUER")), "/"),
 		OIDCClientID:        strings.TrimSpace(os.Getenv("RENDERCASE_OIDC_CLIENT_ID")),
@@ -110,6 +128,21 @@ func Load() (Config, error) {
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("RENDERCASE_DATABASE_URL is required")
+	}
+	switch cfg.StorageBackend {
+	case StorageBackendFilesystem:
+	case StorageBackendS3:
+		if cfg.S3Bucket == "" || cfg.S3Region == "" {
+			return Config{}, errors.New("RENDERCASE_S3_BUCKET and RENDERCASE_S3_REGION are required in s3 storage mode")
+		}
+		if cfg.S3Endpoint != "" {
+			endpoint, endpointErr := url.Parse(cfg.S3Endpoint)
+			if endpointErr != nil || (endpoint.Scheme != "https" && !isLoopbackURL(endpoint)) || endpoint.Hostname() == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+				return Config{}, errors.New("RENDERCASE_S3_ENDPOINT must be an HTTPS origin outside localhost")
+			}
+		}
+	default:
+		return Config{}, fmt.Errorf("RENDERCASE_STORAGE_BACKEND must be %q or %q", StorageBackendFilesystem, StorageBackendS3)
 	}
 	if cfg.OIDCIssuer == "" {
 		return Config{}, errors.New("RENDERCASE_OIDC_ISSUER is required for MCP bearer authentication")
@@ -230,6 +263,18 @@ func envDuration(name string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+func envBool(name string, fallback bool) (bool, error) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false", name)
+	}
+	return parsed, nil
 }
 
 func csv(raw string) []string {

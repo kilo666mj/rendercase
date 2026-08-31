@@ -35,7 +35,7 @@ var webFS embed.FS
 type Server struct {
 	cfg            config.Config
 	db             *store.DB
-	blobs          blob.Store
+	blobs          blob.Backend
 	oauth          oauth2.Config
 	verifier       *oidc.IDTokenVerifier
 	accessVerifier *oidc.IDTokenVerifier
@@ -53,7 +53,7 @@ const (
 	shareCookieName   = "__Host-rendercase_share"
 )
 
-func New(ctx context.Context, cfg config.Config, db *store.DB, blobs blob.Store, logger *slog.Logger) (*Server, error) {
+func New(ctx context.Context, cfg config.Config, db *store.DB, blobs blob.Backend, logger *slog.Logger) (*Server, error) {
 	provider, err := oidc.NewProvider(ctx, cfg.OIDCIssuer)
 	if err != nil {
 		return nil, fmt.Errorf("discover OIDC provider: %w", err)
@@ -456,12 +456,12 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("file")
-	f, info, err := s.blobs.Open(v.ObjectDir, name)
+	object, err := s.blobs.Open(r.Context(), v.ObjectDir, name)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	defer f.Close()
+	defer object.Body.Close()
 	ctype := mime.TypeByExtension(strings.ToLower(path.Ext(name)))
 	if ctype != "" {
 		w.Header().Set("Content-Type", ctype)
@@ -470,7 +470,7 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "private, max-age=300")
-	http.ServeContent(w, r, name, info.ModTime(), f)
+	http.ServeContent(w, r, name, object.LastModified, object.Body)
 }
 
 func (s *Server) listArtifacts(w http.ResponseWriter, r *http.Request) {

@@ -35,8 +35,19 @@ func main() {
 		logger.Error("database migration failed", "error", err)
 		os.Exit(1)
 	}
-	blobs := blob.Store{Root: cfg.StorageRoot, MaxBundleBytes: cfg.MaxBundleBytes, MaxFiles: cfg.MaxFiles}
-	if err := blobs.Init(); err != nil {
+	staging := blob.Store{Root: cfg.StorageRoot, MaxBundleBytes: cfg.MaxBundleBytes, MaxFiles: cfg.MaxFiles}
+	var blobs blob.Backend = staging
+	if cfg.StorageBackend == config.StorageBackendS3 {
+		blobs, err = blob.NewS3Store(ctx, blob.S3Config{
+			Bucket: cfg.S3Bucket, Prefix: cfg.S3Prefix, Region: cfg.S3Region, Endpoint: cfg.S3Endpoint,
+			UsePathStyle: cfg.S3UsePathStyle, Staging: staging,
+		})
+		if err != nil {
+			logger.Error("S3 configuration failed", "error", err)
+			os.Exit(1)
+		}
+	}
+	if err := blobs.Init(ctx); err != nil {
 		logger.Error("artifact storage unavailable", "error", err)
 		os.Exit(1)
 	}

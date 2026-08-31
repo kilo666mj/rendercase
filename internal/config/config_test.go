@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/base64"
 	"net/netip"
+	"strings"
 	"testing"
 )
 
@@ -64,6 +65,49 @@ func TestLoadRejectsInvalidCloudflareAccessConfig(t *testing.T) {
 				t.Fatalf("invalid team domain %q accepted", domain)
 			}
 		})
+	}
+}
+
+func TestLoadS3Storage(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RENDERCASE_STORAGE_BACKEND", StorageBackendS3)
+	t.Setenv("RENDERCASE_STORAGE_ROOT", "/tmp/rendercase-stage")
+	t.Setenv("RENDERCASE_S3_BUCKET", "artifacts")
+	t.Setenv("RENDERCASE_S3_PREFIX", "/rendercase/production/")
+	t.Setenv("RENDERCASE_S3_REGION", "eu-central-1")
+	t.Setenv("RENDERCASE_S3_ENDPOINT", "https://objects.example.com")
+	t.Setenv("RENDERCASE_S3_USE_PATH_STYLE", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.StorageBackend != StorageBackendS3 || cfg.S3Bucket != "artifacts" || cfg.S3Prefix != "rendercase/production" || !cfg.S3UsePathStyle {
+		t.Fatalf("S3 config = %+v", cfg)
+	}
+}
+
+func TestLoadRejectsInvalidS3Storage(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RENDERCASE_STORAGE_BACKEND", StorageBackendS3)
+	if _, err := Load(); err == nil {
+		t.Fatal("S3 storage without a bucket was accepted")
+	}
+	t.Setenv("RENDERCASE_S3_BUCKET", "artifacts")
+	for _, endpoint := range []string{"http://objects.example.com", "https://user@objects.example.com", "https://objects.example.com?query=yes"} {
+		t.Run(endpoint, func(t *testing.T) {
+			t.Setenv("RENDERCASE_S3_ENDPOINT", endpoint)
+			if _, err := Load(); err == nil {
+				t.Fatalf("invalid S3 config with endpoint %q accepted", endpoint)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidS3PathStyle(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RENDERCASE_S3_USE_PATH_STYLE", "sometimes")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "RENDERCASE_S3_USE_PATH_STYLE") {
+		t.Fatalf("Load() error = %v", err)
 	}
 }
 

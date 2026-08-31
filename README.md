@@ -11,6 +11,7 @@ browser origin and shared with a revocable capability link.
 - A Streamable HTTP MCP server for AI clients
 - A REST API and command-line publisher
 - Immutable, versioned ZIP bundles
+- Filesystem or S3-compatible artifact storage
 - Revocable and optionally expiring share links
 - PostgreSQL-backed authorization and audit records
 - Isolation between the management site and untrusted artifact content
@@ -124,6 +125,62 @@ For production, back up both Docker volumes, pin image versions, and configure
 proxy/firewall rules so port 18100 is not directly reachable by untrusted
 networks. Trust only the exact proxy addresses allowed to set forwarded IPs.
 
+### S3-compatible artifact storage
+
+Filesystem storage is the default. To keep immutable artifact objects in AWS
+S3 or a compatible service, configure an existing bucket:
+
+```dotenv
+RENDERCASE_STORAGE_BACKEND=s3
+RENDERCASE_S3_BUCKET=rendercase-artifacts
+RENDERCASE_S3_PREFIX=production
+RENDERCASE_S3_REGION=us-east-1
+```
+
+Rendercase uses the standard AWS credential chain. In Compose, credentials can
+be supplied with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and optionally
+`AWS_SESSION_TOKEN`; AWS-hosted deployments can use their workload role. For a
+compatible service, also set `RENDERCASE_S3_ENDPOINT` to its HTTPS origin and
+enable `RENDERCASE_S3_USE_PATH_STYLE` when that service requires path-style
+bucket URLs. Plain HTTP endpoints are accepted only on localhost for local
+development.
+
+On EKS, IRSA works without Rendercase-specific credentials. Annotate a
+Kubernetes service account with the S3 IAM role and set
+`serviceAccountName` on the Rendercase pod. The EKS admission webhook injects
+`AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE`; the SDK exchanges that token
+through STS using its default credential chain. Do not set static AWS access
+keys in that pod.
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rendercase
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/rendercase-s3
+---
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      serviceAccountName: rendercase
+```
+
+The bucket must already exist. The identity needs permission to inspect the
+bucket and to read and write objects below the configured prefix. Rendercase
+does not list or delete published objects during normal operation.
+
+`RENDERCASE_STORAGE_ROOT` remains required in S3 mode as bounded local staging
+space while ZIP uploads are validated and expanded. Keep its volume and allow
+enough free space for concurrent uploads. Published artifact data is durable in
+S3, so only PostgreSQL and the bucket require durable backup in this mode.
+
+Switching backends does not migrate existing artifacts. Copy existing objects
+into Rendercase's key layout before changing a database to another backend, or
+start with a fresh database.
+
 ## Publish an artifact
 
 Build the CLI:
@@ -229,7 +286,13 @@ are listed in [.env.example](.env.example). Optional controls include:
 | --- | --- | --- |
 | `RENDERCASE_AUTH_MODE` | `oidc` | Browser authentication: `oidc` or `cloudflare_access` |
 | `RENDERCASE_LISTEN` | `127.0.0.1:18100` | HTTP listen address |
-| `RENDERCASE_STORAGE_ROOT` | `/var/lib/rendercase/artifacts` | Artifact storage directory |
+| `RENDERCASE_STORAGE_BACKEND` | `filesystem` | Artifact backend: `filesystem` or `s3` |
+| `RENDERCASE_STORAGE_ROOT` | `/var/lib/rendercase/artifacts` | Filesystem storage, or local staging in S3 mode |
+| `RENDERCASE_S3_BUCKET` | — | Existing S3 bucket; required in S3 mode |
+| `RENDERCASE_S3_PREFIX` | — | Optional object-key prefix |
+| `RENDERCASE_S3_REGION` | `us-east-1` | S3 signing region |
+| `RENDERCASE_S3_ENDPOINT` | — | Optional S3-compatible HTTPS endpoint |
+| `RENDERCASE_S3_USE_PATH_STYLE` | `false` | Use path-style S3 bucket URLs |
 | `RENDERCASE_CF_ACCESS_TEAM_DOMAIN` | — | Cloudflare Access HTTPS team origin |
 | `RENDERCASE_CF_ACCESS_AUD` | — | Exact Access application audience tag |
 | `RENDERCASE_ADMIN_GROUPS` | — | Access groups granted administrator rights |

@@ -427,8 +427,8 @@ func (s *Server) commitForUser(ctx context.Context, user store.User, uploadID, u
 	if artifactID == "" {
 		artifactID = "a_" + upload.ID
 	}
-	staged := blob.Staged{UploadID: upload.ID, Directory: pathJoinFS(s.cfg.StorageRoot, ".uploads", upload.ID), Manifest: manifest, Digest: upload.StagedSHA256, Bytes: upload.StagedBytes}
-	objectDir, err := s.blobs.PublishUpload(staged, artifactID)
+	staged := s.blobs.Staged(upload.ID, manifest, upload.StagedSHA256, upload.StagedBytes)
+	objectDir, err := s.blobs.PublishUpload(ctx, staged, artifactID)
 	if err != nil {
 		return store.Artifact{}, store.Version{}, err
 	}

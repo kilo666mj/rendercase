@@ -30,10 +30,17 @@ func zipBytes(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
+func TestStoreOpenRejectsObjectDirectoryTraversal(t *testing.T) {
+	store := Store{Root: t.TempDir(), MaxBundleBytes: 1024, MaxFiles: 10}
+	if _, err := store.Open(context.Background(), "../escape", "index.html"); err == nil {
+		t.Fatal("object directory traversal accepted")
+	}
+}
+
 func TestCleanupStagesRemovesOnlyOldDirectories(t *testing.T) {
 	root := t.TempDir()
 	store := Store{Root: root, MaxBundleBytes: 1024, MaxFiles: 10}
-	if err := store.Init(); err != nil {
+	if err := store.Init(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	old := filepath.Join(root, ".uploads", "old")
@@ -76,11 +83,11 @@ func TestStagePublishOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, _, err := store.Open(objectDir, "index.html")
+	object, err := store.Open(context.Background(), objectDir, "index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	object.Body.Close()
 	if _, err := os.Stat(filepath.Join(store.Root, objectDir, "manifest.json")); err != nil {
 		t.Fatal(err)
 	}

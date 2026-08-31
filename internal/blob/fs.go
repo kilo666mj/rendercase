@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"mime"
 	"os"
 	"path"
@@ -24,6 +23,8 @@ type Store struct {
 	MaxBundleBytes int64
 	MaxFiles       int
 }
+
+var _ Backend = Store{}
 
 type Manifest struct {
 	Schema     string         `json:"schema"`
@@ -63,7 +64,7 @@ func IsValidationError(err error) bool {
 	return errors.As(err, &validationErr)
 }
 
-func (s Store) Init() error {
+func (s Store) Init(_ context.Context) error {
 	if s.Root == "" || s.MaxBundleBytes <= 0 || s.MaxFiles <= 0 {
 		return errors.New("invalid blob store configuration")
 	}
@@ -76,7 +77,7 @@ func (s Store) Init() error {
 }
 
 func (s Store) StageZIP(ctx context.Context, uploadID, title, entrypoint string, r io.Reader) (Staged, error) {
-	if err := s.Init(); err != nil {
+	if err := s.Init(ctx); err != nil {
 		return Staged{}, err
 	}
 	entrypoint, err := cleanRelative(entrypoint)
@@ -231,7 +232,11 @@ func (s Store) Publish(staged Staged, artifactID string, version int) (string, e
 // PublishUpload moves a staged upload to its immutable object directory. Database
 // versions refer to this directory, so the object name need not predict the next
 // version number and concurrent commits cannot collide.
-func (s Store) PublishUpload(staged Staged, artifactID string) (string, error) {
+func (s Store) Staged(uploadID string, manifest Manifest, digest string, bytes int64) Staged {
+	return Staged{UploadID: uploadID, Directory: filepath.Join(s.Root, ".uploads", uploadID), Manifest: manifest, Digest: digest, Bytes: bytes}
+}
+
+func (s Store) PublishUpload(_ context.Context, staged Staged, artifactID string) (string, error) {
 	relative := filepath.Join(artifactID, "objects", staged.UploadID)
 	destination := filepath.Join(s.Root, relative)
 	if err := os.MkdirAll(filepath.Dir(destination), 0750); err != nil {
@@ -248,20 +253,24 @@ func (s Store) PublishUpload(staged Staged, artifactID string) (string, error) {
 	return filepath.ToSlash(relative), nil
 }
 
-func (s Store) Open(objectDir, name string) (*os.File, fs.FileInfo, error) {
-	name, err := cleanRelative(name)
+func (s Store) Open(_ context.Context, objectDir, name string) (Object, error) {
+	objectDir, err := cleanRelative(filepath.ToSlash(objectDir))
 	if err != nil {
-		return nil, nil, err
+		return Object{}, err
+	}
+	name, err = cleanRelative(name)
+	if err != nil {
+		return Object{}, err
 	}
 	root := filepath.Join(s.Root, filepath.FromSlash(objectDir), "files")
 	file := filepath.Join(root, filepath.FromSlash(name))
 	rel, err := filepath.Rel(root, file)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, nil, errors.New("path escapes artifact")
+		return Object{}, errors.New("path escapes artifact")
 	}
 	f, err := os.Open(file)
 	if err != nil {
-		return nil, nil, err
+		return Object{}, err
 	}
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
@@ -269,9 +278,9 @@ func (s Store) Open(objectDir, name string) (*os.File, fs.FileInfo, error) {
 		if err == nil {
 			err = errors.New("artifact path is not a regular file")
 		}
-		return nil, nil, err
+		return Object{}, err
 	}
-	return f, info, nil
+	return Object{Body: f, Size: info.Size(), LastModified: info.ModTime()}, nil
 }
 
 func (s Store) RemoveStage(uploadID string) error {
