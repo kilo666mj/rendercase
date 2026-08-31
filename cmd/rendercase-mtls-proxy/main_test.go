@@ -36,7 +36,7 @@ func TestRewriteOAuthMetadata(t *testing.T) {
 func TestRewriteMCPUploadURL(t *testing.T) {
 	response := &http.Response{
 		Header:  http.Header{"Content-Type": {"text/event-stream"}},
-		Body:    io.NopCloser(strings.NewReader(`{"structuredContent":{"UploadURL":"https://rendercase.example/api/v1/uploads/test","URL":"https://rendercase.example/a/test"}}`)),
+		Body:    io.NopCloser(strings.NewReader(`{"structuredContent":{"UploadURL":"https://rendercase.example/upload/test","URL":"https://rendercase.example/a/test"}}`)),
 		Request: &http.Request{URL: mustURL(t, "https://rendercase.example/mcp")},
 	}
 	if err := rewriteOAuthMetadata("https://rendercase.example", "http://127.0.0.1:18101")(response); err != nil {
@@ -46,7 +46,7 @@ func TestRewriteMCPUploadURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(body), `{"structuredContent":{"UploadURL":"http://127.0.0.1:18101/api/v1/uploads/test","URL":"https://rendercase.example/a/test"}}`; got != want {
+	if got, want := string(body), `{"structuredContent":{"UploadURL":"http://127.0.0.1:18101/upload/test","URL":"https://rendercase.example/a/test"}}`; got != want {
 		t.Fatalf("body = %q, want %q", got, want)
 	}
 }

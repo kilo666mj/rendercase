@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -159,6 +160,36 @@ func TestUploadTokenIgnoresQueryString(t *testing.T) {
 	if got := uploadToken(request); got != "header-secret" {
 		t.Fatalf("header upload token = %q", got)
 	}
+}
+
+func TestUploadURLUsesDedicatedCapabilityPath(t *testing.T) {
+	s := &Server{cfg: config.Config{PublicURL: mustParseURL(t, "https://rendercase.example/base/")}}
+	if got, want := s.uploadURL("u_example"), "https://rendercase.example/base/upload/u_example"; got != want {
+		t.Fatalf("upload URL = %q, want %q", got, want)
+	}
+}
+
+func TestUploadCapabilityPathAcceptsOnlyPUT(t *testing.T) {
+	s := &Server{cfg: config.Config{
+		PublicURL:  mustParseURL(t, "https://rendercase.example/"),
+		ContentURL: mustParseURL(t, "https://content.rendercase.example/"),
+	}, mcp: http.NotFoundHandler()}
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete} {
+		response := httptest.NewRecorder()
+		s.Handler().ServeHTTP(response, httptest.NewRequest(method, "https://rendercase.example/upload/u_example", nil))
+		if response.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s /upload status = %d", method, response.Code)
+		}
+	}
+}
+
+func mustParseURL(t *testing.T, value string) *url.URL {
+	t.Helper()
+	parsed, err := url.Parse(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed
 }
 
 func TestSecurityCookiesUseHostPrefix(t *testing.T) {

@@ -94,11 +94,14 @@ func (s *Server) Handler() http.Handler {
 	mainMux.HandleFunc("GET /api/v1/auth/oidc/callback", s.callback)
 	mainMux.Handle("POST /auth/logout", s.requireUser(http.HandlerFunc(s.logout)))
 	mainMux.HandleFunc("GET /s/{token}", s.exchangeShare)
-	mainMux.Handle("GET /", s.requireUser(http.HandlerFunc(s.index)))
+	mainMux.Handle("GET /{$}", s.requireUser(http.HandlerFunc(s.index)))
 	mainMux.Handle("GET /admin", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminIndex))))
 	mainMux.HandleFunc("GET /a/{artifact}", s.viewer)
 	mainMux.Handle("GET /api/v1/artifacts", s.requireUser(http.HandlerFunc(s.listArtifacts)))
 	mainMux.Handle("POST /api/v1/artifacts/uploads", s.requireUser(http.HandlerFunc(s.createUpload)))
+	mainMux.HandleFunc("PUT /upload/{upload}", s.putUpload)
+	// Kept for clients that received an upload URL before the dedicated
+	// capability-authenticated path was introduced.
 	mainMux.HandleFunc("PUT /api/v1/uploads/{upload}", s.putUpload)
 	mainMux.Handle("POST /api/v1/uploads/{upload}/commit", s.requireUser(http.HandlerFunc(s.commitUpload)))
 	mainMux.Handle("POST /api/v1/artifacts/{artifact}/shares", s.requireUser(http.HandlerFunc(s.createShare)))
@@ -566,7 +569,11 @@ func (s *Server) createUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, u.ID, "", in.ArtifactID, "upload.create", map[string]any{"upload_id": id})
-	writeJSON(w, http.StatusCreated, map[string]any{"upload_id": id, "upload_token": plain, "upload_url": strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/api/v1/uploads/" + id, "expires_at": upload.ExpiresAt})
+	writeJSON(w, http.StatusCreated, map[string]any{"upload_id": id, "upload_token": plain, "upload_url": s.uploadURL(id), "expires_at": upload.ExpiresAt})
+}
+
+func (s *Server) uploadURL(id string) string {
+	return strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/upload/" + id
 }
 
 func (s *Server) putUpload(w http.ResponseWriter, r *http.Request) {

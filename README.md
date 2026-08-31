@@ -101,11 +101,15 @@ Prerequisites:
 
    Access policy still runs before Rendercase. If capability share links should
    remain usable without an account, configure more-specific Access bypasses
-   for `/s/*`, `/a/*`, and `/static/*`. Likewise, allow the OAuth or service-auth
-   path used by your clients to reach `/mcp`; Rendercase independently enforces
-   its bearer token there. Restrict direct origin access even though assertions
-   are verified, because a valid assertion remains a bearer credential until it
-   expires.
+   for `/s/*`, `/a/*`, and `/static/*`. Large artifact publishing also requires
+   an exact `/upload/*` bypass: that path accepts only `PUT` and Rendercase
+   authenticates it with a high-entropy, short-lived upload capability. Apply
+   edge request-size and rate limits to it. Do **not** bypass
+   `/api/v1/uploads/*`; the nested commit endpoint requires an authenticated
+   user. Likewise, allow the OAuth or service-auth path used by your clients to
+   reach `/mcp`; Rendercase independently enforces its bearer token there.
+   Restrict direct origin access even though assertions are verified, because a
+   valid assertion remains a bearer credential until it expires.
 
 3. Start Rendercase and PostgreSQL:
 
@@ -205,8 +209,8 @@ If the management endpoint requires a client certificate, also set
 The equivalent REST flow is:
 
 1. `POST /api/v1/artifacts/uploads` with a title and entrypoint.
-2. `PUT` the ZIP to the returned URL with `X-Rendercase-Upload-Token` or an
-   `Authorization: Upload …` header.
+2. `PUT` the ZIP to the returned `/upload/{id}` URL with
+   `X-Rendercase-Upload-Token` or an `Authorization: Upload …` header.
 3. `POST /api/v1/uploads/{id}/commit` with the upload token.
 
 Upload tokens are deliberately not accepted in query strings.

@@ -240,7 +240,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 			return nil, createUploadOutput{}, err
 		}
 		s.auditContext(ctx, user.ID, "", in.ArtifactID, "upload.create", map[string]any{"upload_id": id, "interface": "mcp"})
-		out := createUploadOutput{UploadID: id, UploadToken: plain, UploadURL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/api/v1/uploads/" + id, ExpiresAt: expires}
+		out := createUploadOutput{UploadID: id, UploadToken: plain, UploadURL: s.uploadURL(id), ExpiresAt: expires}
 		return textResult("Upload URL created. PUT the ZIP bundle, then commit upload " + id + "."), out, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_commit_upload", Description: "Commit a staged ZIP upload as a new immutable artifact version.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in commitInput) (*mcp.CallToolResult, commitOutput, error) {
