@@ -167,7 +167,7 @@ func Load() (Config, error) {
 
 func validateCFAccess(teamDomain, audience string) error {
 	if teamDomain == "" || audience == "" {
-		return errors.New("Cloudflare Access team domain and AUD are required in cloudflare_access auth mode")
+		return errors.New("missing Cloudflare Access team domain or AUD in cloudflare_access auth mode")
 	}
 	u, err := url.Parse(teamDomain)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {

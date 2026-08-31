@@ -179,7 +179,7 @@ func check(resp *http.Response) error {
 		return nil
 	}
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	return fmt.Errorf("Rendercase returned %s: %s", resp.Status, strings.TrimSpace(string(b)))
+	return fmt.Errorf("rendercase returned %s: %s", resp.Status, strings.TrimSpace(string(b)))
 }
 func printJSON(v any) { b, _ := json.MarshalIndent(v, "", "  "); fmt.Println(string(b)) }
 func env(name, fallback string) string {

@@ -229,13 +229,14 @@ func (s Store) Publish(staged Staged, artifactID string, version int) (string, e
 	return filepath.ToSlash(relative), nil
 }
 
-// PublishUpload moves a staged upload to its immutable object directory. Database
-// versions refer to this directory, so the object name need not predict the next
-// version number and concurrent commits cannot collide.
+// Staged returns the filesystem location and metadata for a staged upload.
 func (s Store) Staged(uploadID string, manifest Manifest, digest string, bytes int64) Staged {
 	return Staged{UploadID: uploadID, Directory: filepath.Join(s.Root, ".uploads", uploadID), Manifest: manifest, Digest: digest, Bytes: bytes}
 }
 
+// PublishUpload moves a staged upload to its immutable object directory. Database
+// versions refer to this directory, so the object name need not predict the next
+// version number and concurrent commits cannot collide.
 func (s Store) PublishUpload(_ context.Context, staged Staged, artifactID string) (string, error) {
 	relative := filepath.Join(artifactID, "objects", staged.UploadID)
 	destination := filepath.Join(s.Root, relative)

@@ -48,10 +48,10 @@ func (s *Server) verifyCloudflareAccess(r *http.Request) (cloudflareAccessIdenti
 
 func (s *Server) verifyCloudflareAccessJWT(ctx context.Context, raw string) (cloudflareAccessIdentity, error) {
 	if raw == "" {
-		return cloudflareAccessIdentity{}, errors.New("Cloudflare Access JWT is required")
+		return cloudflareAccessIdentity{}, errors.New("missing Cloudflare Access JWT")
 	}
 	if s.cfVerifier == nil {
-		return cloudflareAccessIdentity{}, errors.New("Cloudflare Access verifier is unavailable")
+		return cloudflareAccessIdentity{}, errors.New("missing Cloudflare Access verifier")
 	}
 	token, err := s.cfVerifier.Verify(ctx, raw)
 	if err != nil {
@@ -71,10 +71,10 @@ func (s *Server) verifyCloudflareAccessJWT(ctx context.Context, raw string) (clo
 		identity.Groups = appendUnique(identity.Groups, stringSliceClaim(custom["groups"])...)
 	}
 	if stringClaim(claims, "type") != "app" {
-		return cloudflareAccessIdentity{}, errors.New("Cloudflare Access JWT must be an application token")
+		return cloudflareAccessIdentity{}, errors.New("expected Cloudflare Access application token")
 	}
 	if identity.Subject == "" || identity.Email == "" {
-		return cloudflareAccessIdentity{}, errors.New("Cloudflare Access JWT requires sub and email claims")
+		return cloudflareAccessIdentity{}, errors.New("missing Cloudflare Access JWT sub or email claim")
 	}
 	identity.Username = identity.Email
 	if identity.Name == "" {

@@ -133,7 +133,7 @@ func validateLoopback(listen, localURL string) error {
 	if host != "localhost" {
 		ip := net.ParseIP(host)
 		if ip == nil || !ip.IsLoopback() {
-			return errors.New("Rendercase bridge must listen on a loopback address")
+			return errors.New("rendercase bridge must listen on a loopback address")
 		}
 	}
 	u, err := url.Parse(localURL)
