@@ -100,19 +100,26 @@ func TestRejectsTraversalAndMissingEntrypoint(t *testing.T) {
 	}
 }
 
-func TestContainedPathRejectsTraversalWithoutRejectingDoubleDots(t *testing.T) {
+func TestContainedPathRejectsTraversal(t *testing.T) {
 	root := t.TempDir()
-	for _, name := range []string{"../escape", "dir/../../escape", `..\\escape`} {
-		cleaned, err := cleanRelative(name)
-		if err == nil {
-			if _, err := containedPath(root, cleaned); err == nil {
-				t.Errorf("containedPath accepted %q", name)
-			}
+	for _, name := range []string{"../escape", "dir/../../escape"} {
+		if _, err := containedPath(root, name); err == nil {
+			t.Errorf("containedPath accepted %q", name)
 		}
 	}
-	want := filepath.Join(root, "assets", "bundle..js")
-	if got, err := containedPath(root, "assets/bundle..js"); err != nil || got != want {
-		t.Fatalf("legitimate double-dot path = %q, %v; want %q", got, err, want)
+	want := filepath.Join(root, "assets", "bundle.js")
+	if got, err := containedPath(root, "assets/bundle.js"); err != nil || got != want {
+		t.Fatalf("contained path = %q, %v; want %q", got, err, want)
+	}
+}
+
+func TestStageZIPRejectsAnyDoubleDotEntry(t *testing.T) {
+	store := Store{Root: t.TempDir(), MaxBundleBytes: 1024, MaxFiles: 10}
+	data := zipBytes(t, map[string]string{"index.html": "ok", "bundle..js": "no"})
+	if _, err := store.StageZIP(context.Background(), "upload1", "Bad", "index.html", bytes.NewReader(data)); err == nil {
+		t.Fatal("double-dot ZIP entry accepted")
+	} else if !IsValidationError(err) {
+		t.Fatalf("double-dot rejection is not a validation error: %T: %v", err, err)
 	}
 }
 

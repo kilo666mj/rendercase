@@ -132,6 +132,9 @@ func (s Store) StageZIP(ctx context.Context, uploadID, title, entrypoint string,
 		if err := ctx.Err(); err != nil {
 			return Staged{}, err
 		}
+		if strings.Contains(zf.Name, "..") {
+			return Staged{}, validationErrorf("invalid zip path %q: path contains '..'", zf.Name)
+		}
 		name, err := cleanRelative(zf.Name)
 		if err != nil {
 			return Staged{}, validationErrorf("invalid zip path %q: %v", zf.Name, err)
