@@ -70,7 +70,12 @@ Prerequisites:
    ```
 
    `RENDERCASE_ADMIN_SUBJECTS` is a comma-separated list of identity `sub`
-   claims allowed to administer Rendercase.
+   claims allowed to administer Rendercase. Administrators can list every
+   active artifact, revoke any capability share, and soft-delete an artifact
+   through `/admin`, the admin REST endpoints, or admin-only MCP tools. They do
+   not inherit owner/editor access and cannot publish versions for other users.
+   Deletion immediately hides the artifact and revokes its shares, while stored
+   files remain available to an operator for recovery.
 
    To inherit browser identity from Cloudflare Access instead, set:
 
@@ -149,6 +154,14 @@ The equivalent REST flow is:
 
 Upload tokens are deliberately not accepted in query strings.
 
+Administrators additionally have these endpoints:
+
+- `GET /api/v1/admin/artifacts` lists all active artifacts, owners, and active
+  capability shares.
+- `DELETE /api/v1/admin/shares/{share}` revokes any capability share.
+- `DELETE /api/v1/admin/artifacts/{artifact}` soft-deletes an artifact and
+  revokes all of its shares. It does not erase stored object files.
+
 ## Connect an MCP client
 
 The MCP endpoint is `/mcp`. OAuth protected-resource metadata is published at
@@ -166,6 +179,9 @@ Available MCP tools:
 - `rendercase_commit_upload`
 - `rendercase_share`
 - `rendercase_revoke_share`
+- `rendercase_admin_list` (administrators only)
+- `rendercase_admin_revoke_share` (administrators only)
+- `rendercase_admin_delete_artifact` (administrators only)
 
 ## Install the artifact-authoring skill
 

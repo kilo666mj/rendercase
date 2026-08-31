@@ -89,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 	mainMux.Handle("POST /auth/logout", s.requireUser(http.HandlerFunc(s.logout)))
 	mainMux.HandleFunc("GET /s/{token}", s.exchangeShare)
 	mainMux.Handle("GET /", s.requireUser(http.HandlerFunc(s.index)))
+	mainMux.Handle("GET /admin", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminIndex))))
 	mainMux.HandleFunc("GET /a/{artifact}", s.viewer)
 	mainMux.Handle("GET /api/v1/artifacts", s.requireUser(http.HandlerFunc(s.listArtifacts)))
 	mainMux.Handle("POST /api/v1/artifacts/uploads", s.requireUser(http.HandlerFunc(s.createUpload)))
@@ -97,6 +98,9 @@ func (s *Server) Handler() http.Handler {
 	mainMux.Handle("POST /api/v1/artifacts/{artifact}/shares", s.requireUser(http.HandlerFunc(s.createShare)))
 	mainMux.Handle("GET /api/v1/artifacts/{artifact}/shares", s.requireUser(http.HandlerFunc(s.listShares)))
 	mainMux.Handle("DELETE /api/v1/shares/{share}", s.requireUser(http.HandlerFunc(s.revokeShare)))
+	mainMux.Handle("GET /api/v1/admin/artifacts", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminListArtifacts))))
+	mainMux.Handle("DELETE /api/v1/admin/shares/{share}", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminRevokeShare))))
+	mainMux.Handle("DELETE /api/v1/admin/artifacts/{artifact}", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminDeleteArtifact))))
 	mcpHandler := s.requireBearer(http.MaxBytesHandler(s.mcpHandler(), ((s.cfg.MaxBundleBytes+2)/3*4)+(1<<20)))
 	mainMux.Handle("POST /mcp", mcpHandler)
 	mainMux.Handle("GET /mcp", mcpHandler)
@@ -341,6 +345,16 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 	})
 }
 
+func (s *Server) requireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !currentUser(r).Admin {
+			writeError(w, http.StatusForbidden, "administrator access required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) validOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -374,6 +388,15 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.tpl.ExecuteTemplate(w, "index", map[string]any{"User": u, "Artifacts": artifacts})
+}
+
+func (s *Server) adminIndex(w http.ResponseWriter, r *http.Request) {
+	artifacts, err := s.db.ListAdminArtifacts(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	_ = s.tpl.ExecuteTemplate(w, "admin", map[string]any{"User": currentUser(r), "Artifacts": artifacts})
 }
 
 func (s *Server) viewer(w http.ResponseWriter, r *http.Request) {
@@ -457,6 +480,47 @@ func (s *Server) listArtifacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"artifacts": a})
+}
+
+func (s *Server) adminListArtifacts(w http.ResponseWriter, r *http.Request) {
+	artifacts, err := s.db.ListAdminArtifacts(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"artifacts": artifacts})
+}
+
+func (s *Server) adminRevokeShare(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	shareID := r.PathValue("share")
+	artifactID, err := s.db.AdminRevokeShare(r.Context(), shareID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "share not found")
+			return
+		}
+		s.fail(w, r, err)
+		return
+	}
+	s.audit(r, user.ID, "", artifactID, "admin.share.revoke", map[string]any{"share_id": shareID})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) adminDeleteArtifact(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	artifactID := r.PathValue("artifact")
+	artifact, err := s.db.AdminDeleteArtifact(r.Context(), artifactID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "artifact not found")
+			return
+		}
+		s.fail(w, r, err)
+		return
+	}
+	s.audit(r, user.ID, "", artifact.ID, "admin.artifact.delete", map[string]any{"owner_id": artifact.OwnerID, "owner_email": artifact.OwnerEmail, "title": artifact.Title})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) createUpload(w http.ResponseWriter, r *http.Request) {

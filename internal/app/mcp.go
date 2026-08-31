@@ -172,6 +172,12 @@ type revokeShareInput struct {
 type revokeShareOutput struct {
 	ArtifactID string `json:"artifact_id"`
 }
+type adminListOutput struct {
+	Artifacts []store.AdminArtifact `json:"artifacts"`
+}
+type adminDeleteArtifactInput struct {
+	ArtifactID string `json:"artifact_id" jsonschema:"required"`
+}
 
 func (s *Server) newMCPServer(user store.User) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "rendercase", Version: "0.1.0"}, nil)
@@ -288,6 +294,31 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		s.auditContext(ctx, user.ID, "", artifactID, "share.revoke", map[string]any{"share_id": in.ShareID, "interface": "mcp"})
 		return textResult("Capability share revoked."), revokeShareOutput{ArtifactID: artifactID}, nil
 	})
+	if user.Admin {
+		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_list", Description: "List every active artifact, its owner, and active capability shares. Administrator access required."}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, adminListOutput, error) {
+			artifacts, err := s.db.ListAdminArtifacts(ctx)
+			if err != nil {
+				return nil, adminListOutput{}, err
+			}
+			return textResult(fmt.Sprintf("Found %d active artifacts across all users.", len(artifacts))), adminListOutput{Artifacts: artifacts}, nil
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_revoke_share", Description: "Revoke any capability share. Administrator access required; the action is audited."}, func(ctx context.Context, _ *mcp.CallToolRequest, in revokeShareInput) (*mcp.CallToolResult, revokeShareOutput, error) {
+			artifactID, err := s.db.AdminRevokeShare(ctx, in.ShareID)
+			if err != nil {
+				return nil, revokeShareOutput{}, errors.New("share not found")
+			}
+			s.auditContext(ctx, user.ID, "", artifactID, "admin.share.revoke", map[string]any{"share_id": in.ShareID, "interface": "mcp"})
+			return textResult("Capability share revoked by administrator."), revokeShareOutput{ArtifactID: artifactID}, nil
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_delete_artifact", Description: "Soft-delete any artifact and immediately revoke all of its shares. Stored files remain available for operator recovery. Administrator access required; the action is audited."}, func(ctx context.Context, _ *mcp.CallToolRequest, in adminDeleteArtifactInput) (*mcp.CallToolResult, revokeShareOutput, error) {
+			artifact, err := s.db.AdminDeleteArtifact(ctx, in.ArtifactID)
+			if err != nil {
+				return nil, revokeShareOutput{}, errors.New("artifact not found")
+			}
+			s.auditContext(ctx, user.ID, "", artifact.ID, "admin.artifact.delete", map[string]any{"owner_id": artifact.OwnerID, "owner_email": artifact.OwnerEmail, "title": artifact.Title, "interface": "mcp"})
+			return textResult("Artifact removed by administrator and all capability shares revoked."), revokeShareOutput{ArtifactID: artifact.ID}, nil
+		})
+	}
 	return server
 }
 

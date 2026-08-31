@@ -3,7 +3,7 @@
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rendercase</title><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/style.css?v=20260829-2"><style>.inline{display:inline}.link-button{appearance:none;background:none;border:0;color:var(--cyan);cursor:pointer;font:inherit;margin-left:12px;padding:0;text-decoration:underline}</style></head>
 <body><main class="shell">
-  <header class="top">{{template "brand" .}}<div class="session">{{.User.DisplayName}}<form class="inline" method="post" action="/auth/logout"><button class="link-button" type="submit">Sign out</button></form></div></header>
+  <header class="top">{{template "brand" .}}<div class="session">{{.User.DisplayName}}{{if .User.Admin}}<a class="link-button" href="/admin">Admin</a>{{end}}<form class="inline" method="post" action="/auth/logout"><button class="link-button" type="submit">Sign out</button></form></div></header>
   <section class="hero"><span class="eyebrow">PRIVATE ARTIFACT PLANE</span><h1>Make it tangible. <span>Keep it yours.</span></h1><p>Interactive artifacts published by you and your tools, hosted entirely on your infrastructure.</p></section>
   {{if .Artifacts}}<section class="grid">{{range .Artifacts}}<a class="card" href="/a/{{.ID}}"><h2>{{.Title}}</h2><p>{{if .LatestVersion}}Immutable version {{.LatestVersion}}{{else}}Awaiting its first version{{end}}</p><div class="meta">{{.Role}} · {{.UpdatedAt.Format "2006-01-02 15:04 UTC"}}</div></a>{{end}}</section>{{else}}<div class="empty">No artifacts yet. Publish one through the API, CLI, or MCP.</div>{{end}}
 </main></body></html>

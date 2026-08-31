@@ -41,6 +41,12 @@ type Artifact struct {
 	Role                     string
 }
 
+type AdminArtifact struct {
+	Artifact
+	OwnerEmail, OwnerDisplayName string
+	Shares                       []Share
+}
+
 type Version struct {
 	ArtifactID, Title, Entrypoint, ObjectDir, ManifestSHA256 string
 	Version, FileCount                                       int
@@ -233,6 +239,86 @@ func (d *DB) ArtifactForUser(ctx context.Context, artifactID, userID string) (Ar
 	return a, translate(err)
 }
 
+func (d *DB) ListAdminArtifacts(ctx context.Context) ([]AdminArtifact, error) {
+	rows, err := d.Pool.Query(ctx, `SELECT a.id,a.owner_id,a.slug,a.title,a.latest_version,a.created_at,a.updated_at,
+		u.email,u.display_name FROM artifacts a JOIN users u ON u.id=a.owner_id
+		WHERE a.deleted_at IS NULL ORDER BY a.updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AdminArtifact
+	byID := make(map[string]int)
+	for rows.Next() {
+		var a AdminArtifact
+		if err := rows.Scan(&a.ID, &a.OwnerID, &a.Slug, &a.Title, &a.LatestVersion, &a.CreatedAt, &a.UpdatedAt, &a.OwnerEmail, &a.OwnerDisplayName); err != nil {
+			return nil, err
+		}
+		a.Role = "admin"
+		byID[a.ID] = len(out)
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	shareRows, err := d.Pool.Query(ctx, `SELECT id,artifact_id,version,created_by,expires_at,view_limit,view_count,revoked_at
+		FROM shares WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now()) ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer shareRows.Close()
+	for shareRows.Next() {
+		var share Share
+		if err := shareRows.Scan(&share.ID, &share.ArtifactID, &share.Version, &share.CreatedBy, &share.ExpiresAt, &share.ViewLimit, &share.ViewCount, &share.RevokedAt); err != nil {
+			return nil, err
+		}
+		if index, ok := byID[share.ArtifactID]; ok {
+			out[index].Shares = append(out[index].Shares, share)
+		}
+	}
+	return out, shareRows.Err()
+}
+
+func (d *DB) AdminRevokeShare(ctx context.Context, shareID string) (string, error) {
+	tx, err := d.Pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	var artifactID string
+	err = tx.QueryRow(ctx, `UPDATE shares SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL RETURNING artifact_id`, shareID).Scan(&artifactID)
+	if err != nil {
+		return "", translate(err)
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM share_sessions WHERE share_id=$1`, shareID); err != nil {
+		return "", err
+	}
+	return artifactID, tx.Commit(ctx)
+}
+
+func (d *DB) AdminDeleteArtifact(ctx context.Context, artifactID string) (AdminArtifact, error) {
+	tx, err := d.Pool.Begin(ctx)
+	if err != nil {
+		return AdminArtifact{}, err
+	}
+	defer tx.Rollback(ctx)
+	var artifact AdminArtifact
+	err = tx.QueryRow(ctx, `UPDATE artifacts a SET deleted_at=now(),updated_at=now() FROM users u
+		WHERE a.id=$1 AND a.deleted_at IS NULL AND u.id=a.owner_id
+		RETURNING a.id,a.owner_id,a.slug,a.title,a.latest_version,a.created_at,a.updated_at,u.email,u.display_name`, artifactID).
+		Scan(&artifact.ID, &artifact.OwnerID, &artifact.Slug, &artifact.Title, &artifact.LatestVersion, &artifact.CreatedAt, &artifact.UpdatedAt, &artifact.OwnerEmail, &artifact.OwnerDisplayName)
+	if err != nil {
+		return AdminArtifact{}, translate(err)
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM share_sessions WHERE share_id IN (SELECT id FROM shares WHERE artifact_id=$1)`, artifactID); err != nil {
+		return AdminArtifact{}, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE shares SET revoked_at=COALESCE(revoked_at,now()) WHERE artifact_id=$1`, artifactID); err != nil {
+		return AdminArtifact{}, err
+	}
+	return artifact, tx.Commit(ctx)
+}
+
 func (d *DB) CreateUpload(ctx context.Context, u Upload) error {
 	_, err := d.Pool.Exec(ctx, `INSERT INTO upload_sessions(id,artifact_id,created_by,title,entrypoint,token_hash,expires_at)
 		VALUES($1,NULLIF($2,''),$3,$4,$5,$6,$7)`, u.ID, u.ArtifactID, u.CreatedBy, u.Title, u.Entrypoint, u.TokenHash, u.ExpiresAt)
@@ -314,8 +400,9 @@ func (d *DB) CommitVersion(ctx context.Context, in CommitInput) (Artifact, Versi
 
 func (d *DB) Version(ctx context.Context, artifactID string, version int) (Version, error) {
 	var v Version
-	err := d.Pool.QueryRow(ctx, `SELECT artifact_id,version,title,entrypoint,object_dir,manifest,manifest_sha256,byte_size,file_count,created_by,created_at
-		FROM artifact_versions WHERE artifact_id=$1 AND version=$2`, artifactID, version).
+	err := d.Pool.QueryRow(ctx, `SELECT v.artifact_id,v.version,v.title,v.entrypoint,v.object_dir,v.manifest,v.manifest_sha256,v.byte_size,v.file_count,v.created_by,v.created_at
+		FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id
+		WHERE v.artifact_id=$1 AND v.version=$2 AND a.deleted_at IS NULL`, artifactID, version).
 		Scan(&v.ArtifactID, &v.Version, &v.Title, &v.Entrypoint, &v.ObjectDir, &v.Manifest, &v.ManifestSHA256, &v.ByteSize, &v.FileCount, &v.CreatedBy, &v.CreatedAt)
 	return v, translate(err)
 }

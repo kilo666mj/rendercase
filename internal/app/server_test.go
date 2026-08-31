@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -75,6 +76,7 @@ func TestTemplatesIncludeFavicon(t *testing.T) {
 		{name: "index", data: map[string]any{"User": &store.User{}}},
 		{name: "login", data: map[string]any{}},
 		{name: "viewer", data: map[string]any{"Version": store.Version{}}},
+		{name: "admin", data: map[string]any{"User": &store.User{Admin: true}}},
 	} {
 		var rendered bytes.Buffer
 		if err := tpl.ExecuteTemplate(&rendered, test.name, test.data); err != nil {
@@ -82,6 +84,52 @@ func TestTemplatesIncludeFavicon(t *testing.T) {
 		}
 		if !strings.Contains(rendered.String(), `<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">`) {
 			t.Errorf("%s template does not include the favicon", test.name)
+		}
+	}
+}
+
+func TestRequireAdminRejectsOrdinaryUsers(t *testing.T) {
+	s := &Server{}
+	handler := s.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+
+	request := httptest.NewRequest(http.MethodGet, "https://rendercase.example/admin", nil)
+	request = request.WithContext(context.WithValue(request.Context(), userContextKey{}, store.User{ID: "ordinary"}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("ordinary user status = %d", response.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "https://rendercase.example/admin", nil)
+	request = request.WithContext(context.WithValue(request.Context(), userContextKey{}, store.User{ID: "admin", Admin: true}))
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("administrator status = %d", response.Code)
+	}
+}
+
+func TestAdminTemplateContainsOnlyAdministrativeRemovalControls(t *testing.T) {
+	tpl, err := template.ParseFS(webFS, "web/*.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := map[string]any{"User": &store.User{Admin: true}, "Artifacts": []store.AdminArtifact{{
+		Artifact: store.Artifact{ID: "a_example", Title: "Example", LatestVersion: 2}, OwnerEmail: "owner@example.com",
+		Shares: []store.Share{{ID: "s_example", ArtifactID: "a_example"}},
+	}}}
+	var rendered bytes.Buffer
+	if err := tpl.ExecuteTemplate(&rendered, "admin", data); err != nil {
+		t.Fatal(err)
+	}
+	for _, wanted := range []string{`data-delete-artifact="a_example"`, `data-revoke-share="s_example"`, "owner@example.com", "Administrative actions are audited"} {
+		if !strings.Contains(rendered.String(), wanted) {
+			t.Errorf("admin template missing %q", wanted)
+		}
+	}
+	for _, forbidden := range []string{"Publish version", "Edit artifact"} {
+		if strings.Contains(rendered.String(), forbidden) {
+			t.Errorf("admin template unexpectedly grants %q", forbidden)
 		}
 	}
 }
