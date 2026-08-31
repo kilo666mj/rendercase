@@ -21,6 +21,19 @@ a verified Cloudflare Access identity header. MCP clients continue to use OIDC
 OAuth bearer tokens. There is no hosted Rendercase service and artifact files
 stay on storage you control.
 
+The two URLs are a security boundary, not just a routing preference:
+
+- `RENDERCASE_PUBLIC_URL` is the trusted management origin. It serves login,
+  the library UI, privileged REST/MCP endpoints, sharing controls, and audit-
+  generating mutations. Cloudflare Access belongs in front of this hostname
+  when `cloudflare_access` browser authentication is enabled.
+- `RENDERCASE_CONTENT_URL` is the untrusted artifact origin. It serves uploaded
+  HTML, JavaScript, CSS, and WASM through short-lived signed tickets. It must be
+  a different hostname so artifact code cannot inherit management cookies or
+  become same-origin with privileged APIs. Do not put the management Access
+  application in front of this hostname; the sandboxed viewer must be able to
+  load its ticketed content directly.
+
 ## Screenshots
 
 ### Artifact viewer
@@ -68,7 +81,7 @@ Prerequisites:
    RENDERCASE_ADMIN_GROUPS=rendercase-admins
    ```
 
-   Protect the management hostname with the matching Cloudflare Access
+   Protect only the management hostname with the matching Cloudflare Access
    application. Rendercase verifies `Cf-Access-Jwt-Assertion` itself against
    the team JWKS and requires the configured issuer and audience. Groups are
    optional custom Access JWT claims. Keep `RENDERCASE_OIDC_ISSUER` and the MCP
