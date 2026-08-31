@@ -39,6 +39,7 @@ type Server struct {
 	oauth          oauth2.Config
 	verifier       *oidc.IDTokenVerifier
 	accessVerifier *oidc.IDTokenVerifier
+	cfVerifier     *oidc.IDTokenVerifier
 	tpl            *template.Template
 	log            *slog.Logger
 }
@@ -59,10 +60,15 @@ func New(ctx context.Context, cfg config.Config, db *store.DB, blobs blob.Store,
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{
-		cfg: cfg, db: db, blobs: blobs, verifier: provider.Verifier(&oidc.Config{ClientID: cfg.OIDCClientID}), accessVerifier: provider.Verifier(&oidc.Config{SkipClientIDCheck: true}), tpl: tpl, log: logger,
-		oauth: oauth2.Config{ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret, Endpoint: provider.Endpoint(), RedirectURL: cfg.OIDCRedirectURL, Scopes: []string{oidc.ScopeOpenID, "profile", "email"}},
-	}, nil
+	s := &Server{cfg: cfg, db: db, blobs: blobs, accessVerifier: provider.Verifier(&oidc.Config{SkipClientIDCheck: true}), tpl: tpl, log: logger}
+	if cfg.AuthMode == config.AuthModeCloudflareAccess {
+		keys := oidc.NewRemoteKeySet(ctx, cfg.CFAccessTeamDomain+"/cdn-cgi/access/certs")
+		s.cfVerifier = oidc.NewVerifier(cfg.CFAccessTeamDomain, keys, &oidc.Config{ClientID: cfg.CFAccessAudience})
+	} else {
+		s.verifier = provider.Verifier(&oidc.Config{ClientID: cfg.OIDCClientID})
+		s.oauth = oauth2.Config{ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret, Endpoint: provider.Endpoint(), RedirectURL: cfg.OIDCRedirectURL, Scopes: []string{oidc.ScopeOpenID, "profile", "email"}}
+	}
+	return s, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -182,6 +188,10 @@ func (s *Server) oauthProtectedResource(w http.ResponseWriter, _ *http.Request) 
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.AuthMode == config.AuthModeCloudflareAccess {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
 	state, stateHash, err := securetoken.Secret()
 	if err != nil {
 		s.fail(w, r, err)
@@ -208,6 +218,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.AuthMode == config.AuthModeCloudflareAccess {
+		http.NotFound(w, r)
+		return
+	}
 	if problem := r.URL.Query().Get("error"); problem != "" {
 		http.Error(w, "OIDC login failed: "+problem, http.StatusUnauthorized)
 		return
@@ -277,6 +291,10 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.AuthMode == config.AuthModeCloudflareAccess {
+		http.Redirect(w, r, strings.TrimRight(s.cfg.PublicURL.String(), "/")+"/cdn-cgi/access/logout", http.StatusSeeOther)
+		return
+	}
 	if c, err := r.Cookie("rendercase_session"); err == nil {
 		_ = s.db.DeleteSession(r.Context(), securetoken.Hash(c.Value))
 	}
@@ -292,18 +310,22 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 		if bearer {
 			u, err = s.bearerUser(r)
 		} else {
-			u, err = s.sessionUser(r)
+			u, err = s.browserUser(r)
 		}
 		if err != nil {
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				writeError(w, http.StatusUnauthorized, "authentication required")
 				return
 			}
-			if r.URL.Path == "/" {
+			if r.URL.Path == "/" && s.cfg.AuthMode == config.AuthModeOIDC {
 				_ = s.tpl.ExecuteTemplate(w, "login", nil)
 				return
 			}
-			http.Redirect(w, r, "/auth/login?return="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+			if s.cfg.AuthMode == config.AuthModeCloudflareAccess {
+				writeError(w, http.StatusUnauthorized, "Cloudflare Access authentication required")
+			} else {
+				http.Redirect(w, r, "/auth/login?return="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+			}
 			return
 		}
 		if !bearer && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && !s.validOrigin(r) {
@@ -330,6 +352,13 @@ func (s *Server) sessionUser(r *http.Request) (store.User, error) {
 	}
 	return s.db.UserBySession(r.Context(), securetoken.Hash(c.Value))
 }
+
+func (s *Server) browserUser(r *http.Request) (store.User, error) {
+	if s.cfg.AuthMode == config.AuthModeCloudflareAccess {
+		return s.cloudflareAccessUser(r)
+	}
+	return s.sessionUser(r)
+}
 func currentUser(r *http.Request) store.User { return r.Context().Value(userContextKey{}).(store.User) }
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
@@ -347,7 +376,7 @@ func (s *Server) viewer(w http.ResponseWriter, r *http.Request) {
 	var u *store.User
 	var v store.Version
 	canShare := false
-	if session, err := s.sessionUser(r); err == nil {
+	if session, err := s.browserUser(r); err == nil {
 		a, err := s.db.ArtifactForUser(r.Context(), artifactID, session.ID)
 		if err != nil {
 			http.NotFound(w, r)

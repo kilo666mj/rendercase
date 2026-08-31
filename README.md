@@ -7,7 +7,7 @@ browser origin and shared with a revocable capability link.
 
 ## What you get
 
-- A browser UI authenticated with OpenID Connect (OIDC)
+- A browser UI authenticated with OpenID Connect (OIDC) or Cloudflare Access
 - A Streamable HTTP MCP server for AI clients
 - A REST API and command-line publisher
 - Immutable, versioned ZIP bundles
@@ -16,8 +16,10 @@ browser origin and shared with a revocable capability link.
 - Isolation between the management site and untrusted artifact content
 
 Rendercase is intended to sit behind an HTTPS reverse proxy. It requires two
-hostnames, PostgreSQL, and an OIDC provider. There is no hosted Rendercase
-service and artifact files stay on storage you control.
+hostnames and PostgreSQL. Browser authentication can use an OIDC login flow or
+a verified Cloudflare Access identity header. MCP clients continue to use OIDC
+OAuth bearer tokens. There is no hosted Rendercase service and artifact files
+stay on storage you control.
 
 ## Screenshots
 
@@ -35,7 +37,7 @@ Prerequisites:
 
 - Docker with Compose v2
 - Two HTTPS hostnames, one for the UI and one for artifact content
-- An OIDC client from your identity provider
+- An OIDC provider, plus either an OIDC browser client or Cloudflare Access
 
 1. Clone the repository and create your configuration:
 
@@ -47,14 +49,40 @@ Prerequisites:
    ```
 
 2. Put the generated value in `RENDERCASE_COOKIE_SECRET` in `.env`, then fill
-   in the URLs and OIDC settings. Register this callback with your provider:
+   in the URLs and OIDC settings. For the default `oidc` browser mode, register
+   this callback with your provider:
 
    ```text
    https://rendercase.example.com/api/v1/auth/oidc/callback
    ```
 
-   `RENDERCASE_ADMIN_SUBJECTS` is a comma-separated list of OIDC `sub` claims
-   allowed to administer Rendercase.
+   `RENDERCASE_ADMIN_SUBJECTS` is a comma-separated list of identity `sub`
+   claims allowed to administer Rendercase.
+
+   To inherit browser identity from Cloudflare Access instead, set:
+
+   ```dotenv
+   RENDERCASE_AUTH_MODE=cloudflare_access
+   RENDERCASE_CF_ACCESS_TEAM_DOMAIN=https://your-team.cloudflareaccess.com
+   RENDERCASE_CF_ACCESS_AUD=your-access-application-aud-tag
+   RENDERCASE_ADMIN_GROUPS=rendercase-admins
+   ```
+
+   Protect the management hostname with the matching Cloudflare Access
+   application. Rendercase verifies `Cf-Access-Jwt-Assertion` itself against
+   the team JWKS and requires the configured issuer and audience. Groups are
+   optional custom Access JWT claims. Keep `RENDERCASE_OIDC_ISSUER` and the MCP
+   OAuth settings configured for agent and CLI bearer-token authentication;
+   the OIDC client ID, secret, and redirect URL are not needed for browser
+   authentication in this mode.
+
+   Access policy still runs before Rendercase. If capability share links should
+   remain usable without an account, configure more-specific Access bypasses
+   for `/s/*`, `/a/*`, and `/static/*`. Likewise, allow the OAuth or service-auth
+   path used by your clients to reach `/mcp`; Rendercase independently enforces
+   its bearer token there. Restrict direct origin access even though assertions
+   are verified, because a valid assertion remains a bearer credential until it
+   expires.
 
 3. Start Rendercase and PostgreSQL:
 
@@ -166,8 +194,12 @@ are listed in [.env.example](.env.example). Optional controls include:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `RENDERCASE_AUTH_MODE` | `oidc` | Browser authentication: `oidc` or `cloudflare_access` |
 | `RENDERCASE_LISTEN` | `127.0.0.1:18100` | HTTP listen address |
 | `RENDERCASE_STORAGE_ROOT` | `/var/lib/rendercase/artifacts` | Artifact storage directory |
+| `RENDERCASE_CF_ACCESS_TEAM_DOMAIN` | — | Cloudflare Access HTTPS team origin |
+| `RENDERCASE_CF_ACCESS_AUD` | — | Exact Access application audience tag |
+| `RENDERCASE_ADMIN_GROUPS` | — | Access groups granted administrator rights |
 | `RENDERCASE_OAUTH_SCOPE` | `rendercase:mcp` | Required MCP token scope |
 | `RENDERCASE_MAX_BUNDLE_BYTES` | `26214400` | ZIP and expanded bundle limit |
 | `RENDERCASE_MAX_FILES` | `500` | Maximum files per bundle |
@@ -189,6 +221,9 @@ Durations use Go syntax such as `30m`, `12h`, or `168h`. See
   expansion, excessive files, and missing entrypoints.
 - Share, upload, browser-session, and OIDC-state secrets are high entropy and
   stored as hashes. Share URLs exchange their secret for a short-lived cookie.
+- In Cloudflare Access mode, the application validates the assertion signature,
+  issuer, audience, and lifetime against the team JWKS on every browser request;
+  it never trusts an identity header without cryptographic verification.
 - Existing artifact versions are immutable, and shares pin a version by default.
 - Request sizes, titles, annotations, and upload expansion are bounded.
 - Expired sessions, states, uploads, abandoned files, and old audit events are

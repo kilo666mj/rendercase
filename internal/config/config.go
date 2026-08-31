@@ -13,6 +13,7 @@ import (
 )
 
 type Config struct {
+	AuthMode            string
 	ListenAddr          string
 	PublicURL           *url.URL
 	ContentURL          *url.URL
@@ -23,7 +24,10 @@ type Config struct {
 	OIDCClientID        string
 	OIDCClientSecret    string
 	OIDCRedirectURL     string
+	CFAccessTeamDomain  string
+	CFAccessAudience    string
 	AdminSubjects       map[string]struct{}
+	AdminGroups         map[string]struct{}
 	OAuthAudience       string
 	OAuthAudiences      []string
 	OAuthScope          string
@@ -36,6 +40,11 @@ type Config struct {
 	AuditRetention      time.Duration
 	TrustProxyCIDRs     []netip.Prefix
 }
+
+const (
+	AuthModeOIDC             = "oidc"
+	AuthModeCloudflareAccess = "cloudflare_access"
+)
 
 func Load() (Config, error) {
 	publicURL, err := requiredURL("RENDERCASE_PUBLIC_URL")
@@ -67,6 +76,7 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("RENDERCASE_TRUSTED_PROXIES: %w", err)
 	}
 	cfg := Config{
+		AuthMode:            envDefault("RENDERCASE_AUTH_MODE", AuthModeOIDC),
 		ListenAddr:          envDefault("RENDERCASE_LISTEN", "127.0.0.1:18100"),
 		PublicURL:           publicURL,
 		ContentURL:          contentURL,
@@ -77,7 +87,10 @@ func Load() (Config, error) {
 		OIDCClientID:        strings.TrimSpace(os.Getenv("RENDERCASE_OIDC_CLIENT_ID")),
 		OIDCClientSecret:    strings.TrimSpace(os.Getenv("RENDERCASE_OIDC_CLIENT_SECRET")),
 		OIDCRedirectURL:     strings.TrimSpace(os.Getenv("RENDERCASE_OIDC_REDIRECT_URL")),
+		CFAccessTeamDomain:  strings.TrimRight(strings.TrimSpace(os.Getenv("RENDERCASE_CF_ACCESS_TEAM_DOMAIN")), "/"),
+		CFAccessAudience:    strings.TrimSpace(os.Getenv("RENDERCASE_CF_ACCESS_AUD")),
 		AdminSubjects:       csvSet(os.Getenv("RENDERCASE_ADMIN_SUBJECTS")),
+		AdminGroups:         csvSet(os.Getenv("RENDERCASE_ADMIN_GROUPS")),
 		OAuthAudience:       envDefault("RENDERCASE_OAUTH_AUDIENCE", publicURL.String()+"mcp"),
 		OAuthScope:          envDefault("RENDERCASE_OAUTH_SCOPE", "rendercase:mcp"),
 		MaxBundleBytes:      envInt64("RENDERCASE_MAX_BUNDLE_BYTES", 25<<20),
@@ -98,13 +111,36 @@ func Load() (Config, error) {
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("RENDERCASE_DATABASE_URL is required")
 	}
-	if cfg.OIDCIssuer == "" || cfg.OIDCClientID == "" || cfg.OIDCRedirectURL == "" {
-		return Config{}, errors.New("OIDC issuer, client ID, and redirect URL are required")
+	if cfg.OIDCIssuer == "" {
+		return Config{}, errors.New("RENDERCASE_OIDC_ISSUER is required for MCP bearer authentication")
+	}
+	switch cfg.AuthMode {
+	case AuthModeOIDC:
+		if cfg.OIDCClientID == "" || cfg.OIDCRedirectURL == "" {
+			return Config{}, errors.New("OIDC client ID and redirect URL are required in oidc auth mode")
+		}
+	case AuthModeCloudflareAccess:
+		if err := validateCFAccess(cfg.CFAccessTeamDomain, cfg.CFAccessAudience); err != nil {
+			return Config{}, err
+		}
+	default:
+		return Config{}, fmt.Errorf("RENDERCASE_AUTH_MODE must be %q or %q", AuthModeOIDC, AuthModeCloudflareAccess)
 	}
 	if cfg.MaxBundleBytes <= 0 || cfg.MaxFiles <= 0 || cfg.MaintenanceInterval <= 0 || cfg.AuditRetention <= 0 {
 		return Config{}, errors.New("bundle and maintenance limits must be positive")
 	}
 	return cfg, nil
+}
+
+func validateCFAccess(teamDomain, audience string) error {
+	if teamDomain == "" || audience == "" {
+		return errors.New("Cloudflare Access team domain and AUD are required in cloudflare_access auth mode")
+	}
+	u, err := url.Parse(teamDomain)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return errors.New("RENDERCASE_CF_ACCESS_TEAM_DOMAIN must be an HTTPS origin")
+	}
+	return nil
 }
 
 func prefixes(value string) ([]netip.Prefix, error) {
