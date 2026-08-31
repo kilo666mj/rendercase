@@ -3,13 +3,42 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-
+	"github.com/kilo666mj/mcpkit/mcpkittest"
+	"github.com/kilo666mj/rendercase/internal/config"
 	"github.com/kilo666mj/rendercase/internal/store"
 )
+
+func TestMCPTransportBoundsRequestsAndRejectsCrossOrigin(t *testing.T) {
+	s := &Server{cfg: config.Config{MaxBundleBytes: 8}}
+	handler, err := s.mcpHandler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	limit := ((s.cfg.MaxBundleBytes + 2) / 3 * 4) + (1 << 20)
+	request := httptest.NewRequest(http.MethodPost, "https://rendercase.example/mcp", strings.NewReader(strings.Repeat("x", int(limit+1))))
+	request = request.WithContext(context.WithValue(request.Context(), userContextKey{}, store.User{ID: "user"}))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized request status = %d, want 413; body=%q", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "https://rendercase.example/mcp", strings.NewReader(`{}`))
+	request.Header.Set("Origin", "https://attacker.example")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin request status = %d, want 403", response.Code)
+	}
+}
 
 func TestAdminMCPToolsAreVisibleOnlyToAdministrators(t *testing.T) {
 	for _, test := range []struct {
@@ -21,27 +50,39 @@ func TestAdminMCPToolsAreVisibleOnlyToAdministrators(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server := (&Server{}).newMCPServer(store.User{ID: "user", Admin: test.admin})
-			clientTransport, serverTransport := mcp.NewInMemoryTransports()
-			serverSession, err := server.Connect(context.Background(), serverTransport, nil)
+			clientSession := mcpkittest.Connect(t, server)
+			result, err := clientSession.ListTools(t.Context(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer serverSession.Close()
-			client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-			clientSession, err := client.Connect(context.Background(), clientTransport, nil)
-			if err != nil {
-				t.Fatal(err)
+			want := []string{
+				"rendercase_commit_upload", "rendercase_create_upload", "rendercase_get",
+				"rendercase_list", "rendercase_publish", "rendercase_revoke_share", "rendercase_share",
 			}
-			defer clientSession.Close()
-			result, err := clientSession.ListTools(context.Background(), nil)
-			if err != nil {
-				t.Fatal(err)
+			if test.admin {
+				want = append(want, "rendercase_admin_delete_artifact", "rendercase_admin_list", "rendercase_admin_revoke_share")
 			}
+			slices.Sort(want)
+			got := make([]string, 0, len(result.Tools))
 			seenAdmin := false
 			for _, tool := range result.Tools {
+				got = append(got, tool.Name)
 				if strings.HasPrefix(tool.Name, "rendercase_admin_") {
 					seenAdmin = true
 				}
+				if tool.Annotations == nil {
+					t.Errorf("tool %q has no safety annotations", tool.Name)
+					continue
+				}
+				readOnly := slices.Contains([]string{"rendercase_admin_list", "rendercase_get", "rendercase_list"}, tool.Name)
+				destructive := slices.Contains([]string{"rendercase_admin_delete_artifact", "rendercase_admin_revoke_share", "rendercase_revoke_share"}, tool.Name)
+				if tool.Annotations.ReadOnlyHint != readOnly || *tool.Annotations.DestructiveHint != destructive || *tool.Annotations.OpenWorldHint {
+					t.Errorf("tool %q annotations = %+v", tool.Name, tool.Annotations)
+				}
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, want) {
+				t.Fatalf("tool names = %v, want %v", got, want)
 			}
 			if seenAdmin != test.admin {
 				t.Fatalf("admin tools visible = %v, want %v", seenAdmin, test.admin)

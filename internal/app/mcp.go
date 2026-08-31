@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kilo666mj/mcpkit"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/kilo666mj/rendercase/internal/blob"
@@ -21,10 +22,13 @@ import (
 	"github.com/kilo666mj/rendercase/internal/store"
 )
 
-func (s *Server) mcpHandler() http.Handler {
-	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+func (s *Server) mcpHandler() (http.Handler, error) {
+	return mcpkit.StatelessHTTP(func(r *http.Request) *mcp.Server {
 		return s.newMCPServer(currentUser(r))
-	}, &mcp.StreamableHTTPOptions{Stateless: true})
+	}, mcpkit.HTTPOptions{
+		MaxRequestBodyBytes: ((s.cfg.MaxBundleBytes + 2) / 3 * 4) + (1 << 20),
+		Logger:              s.log,
+	})
 }
 
 func (s *Server) requireBearer(next http.Handler) http.Handler {
@@ -180,8 +184,8 @@ type adminDeleteArtifactInput struct {
 }
 
 func (s *Server) newMCPServer(user store.User) *mcp.Server {
-	server := mcp.NewServer(&mcp.Implementation{Name: "rendercase", Version: "0.1.0"}, nil)
-	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_list", Description: "List artifacts the authenticated user owns or can access."}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, listOutput, error) {
+	server := mcpkit.MustServer(mcpkit.ServerConfig{Name: "rendercase", Version: "0.1.0", Logger: s.log})
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_list", Description: "List artifacts the authenticated user owns or can access.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, listOutput, error) {
 		artifacts, err := s.db.ListArtifacts(ctx, user.ID)
 		if err != nil {
 			return nil, listOutput{}, err
@@ -189,7 +193,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		out := listOutput{Artifacts: artifacts}
 		return textResult(fmt.Sprintf("Found %d artifacts.", len(artifacts))), out, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_get", Description: "Get an accessible artifact and one immutable version. Version 0 selects the latest."}, func(ctx context.Context, _ *mcp.CallToolRequest, in getInput) (*mcp.CallToolResult, getOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_get", Description: "Get an accessible artifact and one immutable version. Version 0 selects the latest.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in getInput) (*mcp.CallToolResult, getOutput, error) {
 		a, err := s.db.ArtifactForUser(ctx, in.ArtifactID, user.ID)
 		if err != nil {
 			return nil, getOutput{}, errors.New("artifact access required")
@@ -208,7 +212,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		out := getOutput{Artifact: a, Version: mcpV, URL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/a/" + a.ID}
 		return textResult("Found " + a.Title + " version " + strconv.Itoa(v.Version) + "."), out, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_create_upload", Description: "Create a short-lived upload URL for a ZIP bundle. To update an existing artifact, set artifact_id to an artifact owned by the caller; committing creates its next immutable version. PUT the ZIP using X-Rendercase-Upload-Token, then call rendercase_commit_upload."}, func(ctx context.Context, _ *mcp.CallToolRequest, in createUploadInput) (*mcp.CallToolResult, createUploadOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_create_upload", Description: "Create a short-lived upload URL for a ZIP bundle. To update an existing artifact, set artifact_id to an artifact owned by the caller; committing creates its next immutable version. PUT the ZIP using X-Rendercase-Upload-Token, then call rendercase_commit_upload.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in createUploadInput) (*mcp.CallToolResult, createUploadOutput, error) {
 		var err error
 		in.Title, err = normalizeTitle(in.Title)
 		if err != nil {
@@ -239,7 +243,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		out := createUploadOutput{UploadID: id, UploadToken: plain, UploadURL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/api/v1/uploads/" + id, ExpiresAt: expires}
 		return textResult("Upload URL created. PUT the ZIP bundle, then commit upload " + id + "."), out, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_commit_upload", Description: "Commit a staged ZIP upload as a new immutable artifact version."}, func(ctx context.Context, _ *mcp.CallToolRequest, in commitInput) (*mcp.CallToolResult, commitOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_commit_upload", Description: "Commit a staged ZIP upload as a new immutable artifact version.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in commitInput) (*mcp.CallToolResult, commitOutput, error) {
 		a, v, err := s.commitForUser(ctx, user, in.UploadID, in.UploadToken)
 		if err != nil {
 			return nil, commitOutput{}, err
@@ -252,14 +256,14 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		out := commitOutput{Artifact: a, Version: mcpV, URL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/a/" + a.ID}
 		return textResult("Published " + a.Title + " version " + strconv.Itoa(v.Version) + ": " + out.URL), out, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_publish", Description: "Create or update an artifact in one MCP call from a base64-encoded ZIP bundle. Set artifact_id to an artifact owned by the caller to create its next immutable version."}, func(ctx context.Context, _ *mcp.CallToolRequest, in publishInput) (*mcp.CallToolResult, commitOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_publish", Description: "Create or update an artifact in one MCP call from a base64-encoded ZIP bundle. Set artifact_id to an artifact owned by the caller to create its next immutable version.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in publishInput) (*mcp.CallToolResult, commitOutput, error) {
 		out, err := s.publishBundleForUser(ctx, user, in)
 		if err != nil {
 			return nil, commitOutput{}, err
 		}
 		return textResult("Published " + out.Artifact.Title + " version " + strconv.Itoa(out.Version.Version) + ": " + out.URL), out, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_share", Description: "Create a revocable capability link for an artifact. Anyone with the link can view it until it expires or is revoked."}, func(ctx context.Context, _ *mcp.CallToolRequest, in shareInput) (*mcp.CallToolResult, shareOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_share", Description: "Create a revocable capability link for an artifact. Anyone with the link can view it until it expires or is revoked.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in shareInput) (*mcp.CallToolResult, shareOutput, error) {
 		a, err := s.db.ArtifactForUser(ctx, in.ArtifactID, user.ID)
 		if err != nil || a.Role != "owner" {
 			return nil, shareOutput{}, errors.New("artifact owner access required")
@@ -286,7 +290,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		out := shareOutput{ShareID: id, URL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/s/" + plain}
 		return textResult("Capability link created: " + out.URL), out, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_revoke_share", Description: "Immediately revoke a capability share owned by the authenticated user."}, func(ctx context.Context, _ *mcp.CallToolRequest, in revokeShareInput) (*mcp.CallToolResult, revokeShareOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_revoke_share", Description: "Immediately revoke a capability share owned by the authenticated user.", Annotations: mcpkit.Destructive(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in revokeShareInput) (*mcp.CallToolResult, revokeShareOutput, error) {
 		artifactID, err := s.db.RevokeShare(ctx, in.ShareID, user.ID)
 		if err != nil {
 			return nil, revokeShareOutput{}, errors.New("share not found")
@@ -295,14 +299,14 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		return textResult("Capability share revoked."), revokeShareOutput{ArtifactID: artifactID}, nil
 	})
 	if user.Admin {
-		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_list", Description: "List every active artifact, its owner, and active capability shares. Administrator access required."}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, adminListOutput, error) {
+		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_list", Description: "List every active artifact, its owner, and active capability shares. Administrator access required.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, adminListOutput, error) {
 			artifacts, err := s.db.ListAdminArtifacts(ctx)
 			if err != nil {
 				return nil, adminListOutput{}, err
 			}
 			return textResult(fmt.Sprintf("Found %d active artifacts across all users.", len(artifacts))), adminListOutput{Artifacts: artifacts}, nil
 		})
-		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_revoke_share", Description: "Revoke any capability share. Administrator access required; the action is audited."}, func(ctx context.Context, _ *mcp.CallToolRequest, in revokeShareInput) (*mcp.CallToolResult, revokeShareOutput, error) {
+		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_revoke_share", Description: "Revoke any capability share. Administrator access required; the action is audited.", Annotations: mcpkit.Destructive(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in revokeShareInput) (*mcp.CallToolResult, revokeShareOutput, error) {
 			artifactID, err := s.db.AdminRevokeShare(ctx, in.ShareID)
 			if err != nil {
 				return nil, revokeShareOutput{}, errors.New("share not found")
@@ -310,7 +314,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 			s.auditContext(ctx, user.ID, "", artifactID, "admin.share.revoke", map[string]any{"share_id": in.ShareID, "interface": "mcp"})
 			return textResult("Capability share revoked by administrator."), revokeShareOutput{ArtifactID: artifactID}, nil
 		})
-		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_delete_artifact", Description: "Soft-delete any artifact and immediately revoke all of its shares. Stored files remain available for operator recovery. Administrator access required; the action is audited."}, func(ctx context.Context, _ *mcp.CallToolRequest, in adminDeleteArtifactInput) (*mcp.CallToolResult, revokeShareOutput, error) {
+		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_delete_artifact", Description: "Soft-delete any artifact and immediately revoke all of its shares. Stored files remain available for operator recovery. Administrator access required; the action is audited.", Annotations: mcpkit.Destructive(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in adminDeleteArtifactInput) (*mcp.CallToolResult, revokeShareOutput, error) {
 			artifact, err := s.db.AdminDeleteArtifact(ctx, in.ArtifactID)
 			if err != nil {
 				return nil, revokeShareOutput{}, errors.New("artifact not found")

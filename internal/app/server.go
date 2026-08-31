@@ -42,6 +42,7 @@ type Server struct {
 	cfVerifier     *oidc.IDTokenVerifier
 	tpl            *template.Template
 	log            *slog.Logger
+	mcp            http.Handler
 }
 
 type userContextKey struct{}
@@ -73,6 +74,11 @@ func New(ctx context.Context, cfg config.Config, db *store.DB, blobs blob.Backen
 		s.verifier = provider.Verifier(&oidc.Config{ClientID: cfg.OIDCClientID})
 		s.oauth = oauth2.Config{ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret, Endpoint: provider.Endpoint(), RedirectURL: cfg.OIDCRedirectURL, Scopes: []string{oidc.ScopeOpenID, "profile", "email"}}
 	}
+	mcpHandler, err := s.mcpHandler()
+	if err != nil {
+		return nil, fmt.Errorf("create MCP handler: %w", err)
+	}
+	s.mcp = s.requireBearer(mcpHandler)
 	return s, nil
 }
 
@@ -101,10 +107,9 @@ func (s *Server) Handler() http.Handler {
 	mainMux.Handle("GET /api/v1/admin/artifacts", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminListArtifacts))))
 	mainMux.Handle("DELETE /api/v1/admin/shares/{share}", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminRevokeShare))))
 	mainMux.Handle("DELETE /api/v1/admin/artifacts/{artifact}", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminDeleteArtifact))))
-	mcpHandler := s.requireBearer(http.MaxBytesHandler(s.mcpHandler(), ((s.cfg.MaxBundleBytes+2)/3*4)+(1<<20)))
-	mainMux.Handle("POST /mcp", mcpHandler)
-	mainMux.Handle("GET /mcp", mcpHandler)
-	mainMux.Handle("DELETE /mcp", mcpHandler)
+	mainMux.Handle("POST /mcp", s.mcp)
+	mainMux.Handle("GET /mcp", s.mcp)
+	mainMux.Handle("DELETE /mcp", s.mcp)
 
 	contentMux := http.NewServeMux()
 	contentMux.HandleFunc("GET /healthz", s.health)
