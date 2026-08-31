@@ -85,9 +85,13 @@ Prerequisites:
    application. Rendercase verifies `Cf-Access-Jwt-Assertion` itself against
    the team JWKS and requires the configured issuer and audience. Groups are
    optional custom Access JWT claims. Keep `RENDERCASE_OIDC_ISSUER` and the MCP
-   OAuth settings configured for agent and CLI bearer-token authentication;
+   OAuth settings configured if agents and CLI clients use OIDC bearer tokens;
    the OIDC client ID, secret, and redirect URL are not needed for browser
-   authentication in this mode.
+   authentication in this mode. MCP clients may instead send the same
+   Cloudflare Access application JWT as `Authorization: Bearer <jwt>` to
+   `/mcp`. Rendercase verifies it with the configured Access issuer, JWKS, and
+   audience, maps `custom.groups` through `RENDERCASE_ADMIN_GROUPS`, and does
+   not require the OIDC scope claim on that Access assertion.
 
    Access policy still runs before Rendercase. If capability share links should
    remain usable without an account, configure more-specific Access bypasses

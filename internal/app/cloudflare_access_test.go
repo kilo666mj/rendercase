@@ -42,7 +42,7 @@ func TestVerifyCloudflareAccess(t *testing.T) {
 	s := &Server{cfVerifier: verifier}
 
 	valid := signAccessJWT(t, signer, issuer, audience, map[string]any{
-		"sub": "identity-subject", "email": "person@example.com", "name": "Example Person", "groups": []string{"developers", "rendercase-admins"},
+		"sub": "identity-subject", "email": "person@example.com", "name": "Example Person", "type": "app", "groups": []string{"developers"}, "custom": map[string]any{"groups": []string{"developers", "rendercase-admins"}},
 	})
 	request := httptest.NewRequest(http.MethodGet, "https://rendercase.example.com/", nil)
 	request.Header.Set(cfAccessJWTHeader, valid)
@@ -57,7 +57,7 @@ func TestVerifyCloudflareAccess(t *testing.T) {
 		t.Fatalf("groups = %#v", identity.Groups)
 	}
 
-	request.Header.Set(cfAccessJWTHeader, signAccessJWT(t, signer, issuer, "wrong-audience", map[string]any{"sub": "subject", "email": "person@example.com"}))
+	request.Header.Set(cfAccessJWTHeader, signAccessJWT(t, signer, issuer, "wrong-audience", map[string]any{"sub": "subject", "email": "person@example.com", "type": "app"}))
 	if _, err := s.verifyCloudflareAccess(request); err == nil {
 		t.Fatal("wrong audience accepted")
 	}
@@ -69,13 +69,41 @@ func TestVerifyCloudflareAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request.Header.Set(cfAccessJWTHeader, signAccessJWT(t, otherSigner, issuer, audience, map[string]any{"sub": "subject", "email": "person@example.com"}))
+	request.Header.Set(cfAccessJWTHeader, signAccessJWT(t, otherSigner, issuer, audience, map[string]any{"sub": "subject", "email": "person@example.com", "type": "app"}))
 	if _, err := s.verifyCloudflareAccess(request); err == nil {
 		t.Fatal("untrusted signature accepted")
 	}
 	request.Header.Del(cfAccessJWTHeader)
 	if _, err := s.verifyCloudflareAccess(request); err == nil {
 		t.Fatal("missing assertion accepted")
+	}
+}
+
+func TestVerifyCloudflareAccessBearerUsesSameJWTContract(t *testing.T) {
+	const issuer = "https://example.cloudflareaccess.com"
+	const audience = "access-audience"
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{cfVerifier: oidc.NewVerifier(issuer, rsaKeySet{publicKey: &key.PublicKey}, &oidc.Config{ClientID: audience})}
+	raw := signAccessJWT(t, signer, issuer, audience, map[string]any{"sub": "agent-subject", "email": "agent@example.com", "type": "app", "custom": map[string]any{"groups": []string{"rendercase-admins"}}})
+	identity, err := s.verifyCloudflareAccessJWT(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.Subject != "agent-subject" || identity.Email != "agent@example.com" || len(identity.Groups) != 1 || identity.Groups[0] != "rendercase-admins" {
+		t.Fatalf("identity = %+v", identity)
+	}
+	if _, err := s.verifyCloudflareAccessJWT(context.Background(), signAccessJWT(t, signer, issuer, "wrong-audience", map[string]any{"sub": "agent-subject", "email": "agent@example.com", "type": "app"})); err == nil {
+		t.Fatal("wrong bearer audience accepted")
+	}
+	if _, err := s.verifyCloudflareAccessJWT(context.Background(), signAccessJWT(t, signer, issuer, audience, map[string]any{"sub": "agent-subject", "email": "agent@example.com", "type": "org"})); err == nil {
+		t.Fatal("non-application bearer token accepted")
 	}
 }
 
@@ -140,7 +168,7 @@ func TestVerifyCloudflareAccessRequiresStableIdentityClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Server{cfVerifier: oidc.NewVerifier(issuer, rsaKeySet{publicKey: &key.PublicKey}, &oidc.Config{ClientID: "aud"})}
-	for _, claims := range []map[string]any{{"email": "person@example.com"}, {"sub": "subject"}} {
+	for _, claims := range []map[string]any{{"email": "person@example.com", "type": "app"}, {"sub": "subject", "type": "app"}} {
 		request := httptest.NewRequest(http.MethodGet, "https://rendercase.example.com/", nil)
 		request.Header.Set(cfAccessJWTHeader, signAccessJWT(t, signer, issuer, "aud", claims))
 		if _, err := s.verifyCloudflareAccess(request); err == nil {

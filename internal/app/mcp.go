@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/kilo666mj/rendercase/internal/blob"
+	"github.com/kilo666mj/rendercase/internal/config"
 	"github.com/kilo666mj/rendercase/internal/securetoken"
 	"github.com/kilo666mj/rendercase/internal/store"
 )
@@ -34,13 +35,24 @@ func (s *Server) requireBearer(next http.Handler) http.Handler {
 			writeError(w, 401, "bearer token required")
 			return
 		}
-		u, err := s.bearerUser(r)
+		u, err := s.mcpBearerUser(r)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userContextKey{}, u)))
 	})
+}
+
+func (s *Server) mcpBearerUser(r *http.Request) (store.User, error) {
+	if s.cfg.AuthMode == config.AuthModeCloudflareAccess {
+		header := r.Header.Get("Authorization")
+		if !strings.HasPrefix(header, "Bearer ") {
+			return store.User{}, errors.New("bearer token required")
+		}
+		return s.cloudflareAccessUserFromJWT(r.Context(), strings.TrimPrefix(header, "Bearer "))
+	}
+	return s.bearerUser(r)
 }
 
 func (s *Server) bearerUser(r *http.Request) (store.User, error) {

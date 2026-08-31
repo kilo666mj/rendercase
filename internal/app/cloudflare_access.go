@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"slices"
@@ -16,12 +17,16 @@ type cloudflareAccessIdentity struct {
 }
 
 func (s *Server) cloudflareAccessUser(r *http.Request) (store.User, error) {
-	identity, err := s.verifyCloudflareAccess(r)
+	return s.cloudflareAccessUserFromJWT(r.Context(), r.Header.Get(cfAccessJWTHeader))
+}
+
+func (s *Server) cloudflareAccessUserFromJWT(ctx context.Context, raw string) (store.User, error) {
+	identity, err := s.verifyCloudflareAccessJWT(ctx, raw)
 	if err != nil {
 		return store.User{}, err
 	}
 	admin := s.cloudflareAccessAdmin(identity)
-	return s.db.UpsertUser(r.Context(), "cloudflare_access:"+identity.Subject, identity.Username, identity.Email, identity.Name, admin)
+	return s.db.UpsertUser(ctx, "cloudflare_access:"+identity.Subject, identity.Username, identity.Email, identity.Name, admin)
 }
 
 func (s *Server) cloudflareAccessAdmin(identity cloudflareAccessIdentity) bool {
@@ -38,14 +43,17 @@ func (s *Server) cloudflareAccessAdmin(identity cloudflareAccessIdentity) bool {
 }
 
 func (s *Server) verifyCloudflareAccess(r *http.Request) (cloudflareAccessIdentity, error) {
-	raw := r.Header.Get(cfAccessJWTHeader)
+	return s.verifyCloudflareAccessJWT(r.Context(), r.Header.Get(cfAccessJWTHeader))
+}
+
+func (s *Server) verifyCloudflareAccessJWT(ctx context.Context, raw string) (cloudflareAccessIdentity, error) {
 	if raw == "" {
 		return cloudflareAccessIdentity{}, errors.New("Cloudflare Access JWT is required")
 	}
 	if s.cfVerifier == nil {
 		return cloudflareAccessIdentity{}, errors.New("Cloudflare Access verifier is unavailable")
 	}
-	token, err := s.cfVerifier.Verify(r.Context(), raw)
+	token, err := s.cfVerifier.Verify(ctx, raw)
 	if err != nil {
 		return cloudflareAccessIdentity{}, errors.New("invalid Cloudflare Access JWT")
 	}
@@ -59,6 +67,12 @@ func (s *Server) verifyCloudflareAccess(r *http.Request) (cloudflareAccessIdenti
 		Name:    stringClaim(claims, "name"),
 		Groups:  stringSliceClaim(claims["groups"]),
 	}
+	if custom, ok := claims["custom"].(map[string]any); ok {
+		identity.Groups = appendUnique(identity.Groups, stringSliceClaim(custom["groups"])...)
+	}
+	if stringClaim(claims, "type") != "app" {
+		return cloudflareAccessIdentity{}, errors.New("Cloudflare Access JWT must be an application token")
+	}
 	if identity.Subject == "" || identity.Email == "" {
 		return cloudflareAccessIdentity{}, errors.New("Cloudflare Access JWT requires sub and email claims")
 	}
@@ -67,6 +81,15 @@ func (s *Server) verifyCloudflareAccess(r *http.Request) (cloudflareAccessIdenti
 		identity.Name = identity.Email
 	}
 	return identity, nil
+}
+
+func appendUnique(values []string, additions ...string) []string {
+	for _, addition := range additions {
+		if !slices.Contains(values, addition) {
+			values = append(values, addition)
+		}
+	}
+	return values
 }
 
 func stringSliceClaim(value any) []string {
