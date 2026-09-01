@@ -76,11 +76,11 @@ func (s Store) Init(_ context.Context) error {
 	return nil
 }
 
-func (s Store) StageZIP(ctx context.Context, uploadID, title, entrypoint string, r io.Reader) (Staged, error) {
+func (s Store) StageZIP(ctx context.Context, uploadID, title, entrypoint string, r io.Reader) (_ Staged, err error) {
 	if err := s.Init(ctx); err != nil {
 		return Staged{}, err
 	}
-	entrypoint, err := cleanRelative(entrypoint)
+	entrypoint, err = cleanRelative(entrypoint)
 	if err != nil {
 		return Staged{}, validationErrorf("invalid entrypoint: %v", err)
 	}
@@ -116,7 +116,7 @@ func (s Store) StageZIP(ctx context.Context, uploadID, title, entrypoint string,
 	if err != nil {
 		return Staged{}, validationErrorf("invalid zip archive: %v", err)
 	}
-	defer zr.Close()
+	defer closeWithError(&err, "close ZIP archive", zr.Close)
 	if len(zr.File) > s.MaxFiles {
 		return Staged{}, validationErrorf("bundle contains more than %d files", s.MaxFiles)
 	}
@@ -170,8 +170,7 @@ func (s Store) StageZIP(ctx context.Context, uploadID, title, entrypoint string,
 		}
 		dest, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0640)
 		if err != nil {
-			source.Close()
-			return Staged{}, err
+			return Staged{}, errors.Join(err, closeError("close ZIP entry", source.Close))
 		}
 		h := sha256.New()
 		n, copyErr := io.Copy(io.MultiWriter(dest, h), io.LimitReader(source, remaining+1))
@@ -275,13 +274,24 @@ func (s Store) Open(_ context.Context, objectDir, name string) (Object, error) {
 	}
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		f.Close()
+		err = errors.Join(err, closeError("close artifact file", f.Close))
 		if err == nil {
 			err = errors.New("artifact path is not a regular file")
 		}
 		return Object{}, err
 	}
 	return Object{Body: f, Size: info.Size(), LastModified: info.ModTime()}, nil
+}
+
+func closeError(context string, closeFn func() error) error {
+	if err := closeFn(); err != nil {
+		return fmt.Errorf("%s: %w", context, err)
+	}
+	return nil
+}
+
+func closeWithError(errp *error, context string, closeFn func() error) {
+	*errp = errors.Join(*errp, closeError(context, closeFn))
 }
 
 func (s Store) RemoveStage(uploadID string) error {

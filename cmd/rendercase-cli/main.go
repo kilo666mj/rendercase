@@ -79,7 +79,7 @@ func configuredHTTPClient() (*http.Client, error) {
 	return &http.Client{Timeout: 2 * time.Minute, Transport: transport}, nil
 }
 
-func (c client) publish(args []string) error {
+func (c client) publish(args []string) (err error) {
 	fs := flag.NewFlagSet("publish", flag.ContinueOnError)
 	title := fs.String("title", "", "artifact title")
 	entry := fs.String("entrypoint", "index.html", "bundle entrypoint")
@@ -103,7 +103,7 @@ func (c client) publish(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer closeWithError(&err, "close ZIP bundle", f.Close)
 	req, err := http.NewRequest(http.MethodPut, upload.UploadURL, f)
 	if err != nil {
 		return err
@@ -113,6 +113,7 @@ func (c client) publish(args []string) error {
 	if err != nil {
 		return err
 	}
+	defer closeWithError(&err, "close upload response body", resp.Body.Close)
 	if err = check(resp); err != nil {
 		return err
 	}
@@ -144,7 +145,7 @@ func (c client) share(args []string) error {
 	printJSON(out)
 	return nil
 }
-func (c client) json(method, path string, input, output any) error {
+func (c client) json(method, path string, input, output any) (err error) {
 	var body io.Reader
 	if input != nil {
 		b, err := json.Marshal(input)
@@ -165,7 +166,7 @@ func (c client) json(method, path string, input, output any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer closeWithError(&err, "close response body", resp.Body.Close)
 	if err = check(resp); err != nil {
 		return err
 	}
@@ -173,6 +174,12 @@ func (c client) json(method, path string, input, output any) error {
 		return json.NewDecoder(resp.Body).Decode(output)
 	}
 	return nil
+}
+
+func closeWithError(errp *error, context string, closeFn func() error) {
+	if err := closeFn(); err != nil {
+		*errp = errors.Join(*errp, fmt.Errorf("%s: %w", context, err))
+	}
 }
 func check(resp *http.Response) error {
 	if resp.StatusCode < 300 {

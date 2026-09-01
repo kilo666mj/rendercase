@@ -79,7 +79,11 @@ func TestS3StoreStagesPublishesAndReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer object.Body.Close()
+	defer func() {
+		if err := object.Body.Close(); err != nil {
+			t.Errorf("close object body: %v", err)
+		}
+	}()
 	got, err := io.ReadAll(object.Body)
 	if err != nil || string(got) != "<h1>Hello</h1>" || object.Size != int64(len(got)) {
 		t.Fatalf("opened object = %q, size %d, err %v", got, object.Size, err)

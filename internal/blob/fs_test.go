@@ -87,7 +87,9 @@ func TestStagePublishOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	object.Body.Close()
+	if err := object.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(filepath.Join(store.Root, objectDir, "manifest.json")); err != nil {
 		t.Fatal(err)
 	}

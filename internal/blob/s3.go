@@ -134,12 +134,12 @@ func (s *S3Store) PublishUpload(ctx context.Context, staged Staged, artifactID s
 	return objectDir, nil
 }
 
-func (s *S3Store) putFile(ctx context.Context, objectName, filename, contentType string) error {
+func (s *S3Store) putFile(ctx context.Context, objectName, filename, contentType string) (err error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer closeWithError(&err, "close staged file", file.Close)
 	info, err := file.Stat()
 	if err != nil {
 		return err
@@ -157,8 +157,8 @@ func (s *S3Store) putFile(ctx context.Context, objectName, filename, contentType
 	return nil
 }
 
-func (s *S3Store) Open(ctx context.Context, objectDir, name string) (Object, error) {
-	objectDir, err := cleanRelative(objectDir)
+func (s *S3Store) Open(ctx context.Context, objectDir, name string) (_ Object, err error) {
+	objectDir, err = cleanRelative(objectDir)
 	if err != nil {
 		return Object{}, err
 	}
@@ -170,7 +170,7 @@ func (s *S3Store) Open(ctx context.Context, objectDir, name string) (Object, err
 	if err != nil {
 		return Object{}, err
 	}
-	defer out.Body.Close()
+	defer closeWithError(&err, "close S3 object body", out.Body.Close)
 	size := aws.ToInt64(out.ContentLength)
 	if size < 0 || size > s.staging.MaxBundleBytes {
 		return Object{}, errors.New("S3 object size exceeds configured bundle limit")

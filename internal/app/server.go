@@ -469,7 +469,11 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	defer object.Body.Close()
+	defer func() {
+		if err := object.Body.Close(); err != nil {
+			s.log.Error("close artifact body", "artifact", artifactID, "version", version, "file", name, "error", err)
+		}
+	}()
 	ctype := mime.TypeByExtension(strings.ToLower(path.Ext(name)))
 	if ctype != "" {
 		w.Header().Set("Content-Type", ctype)

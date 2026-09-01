@@ -118,12 +118,12 @@ func (d *DB) Migrate(ctx context.Context) error {
 
 func (d *DB) Ping(ctx context.Context) error { return d.Pool.Ping(ctx) }
 
-func (d *DB) CleanupExpired(ctx context.Context, auditBefore time.Time) (CleanupResult, bool, error) {
+func (d *DB) CleanupExpired(ctx context.Context, auditBefore time.Time) (_ CleanupResult, _ bool, err error) {
 	tx, err := d.Pool.Begin(ctx)
 	if err != nil {
 		return CleanupResult{}, false, err
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx, &err)
 	var locked bool
 	if err = tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock(747823274684676745)`).Scan(&locked); err != nil || !locked {
 		return CleanupResult{}, locked, err
@@ -279,12 +279,12 @@ func (d *DB) ListAdminArtifacts(ctx context.Context) ([]AdminArtifact, error) {
 	return out, shareRows.Err()
 }
 
-func (d *DB) AdminRevokeShare(ctx context.Context, shareID string) (string, error) {
+func (d *DB) AdminRevokeShare(ctx context.Context, shareID string) (_ string, err error) {
 	tx, err := d.Pool.Begin(ctx)
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx, &err)
 	var artifactID string
 	err = tx.QueryRow(ctx, `UPDATE shares SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL RETURNING artifact_id`, shareID).Scan(&artifactID)
 	if err != nil {
@@ -296,12 +296,12 @@ func (d *DB) AdminRevokeShare(ctx context.Context, shareID string) (string, erro
 	return artifactID, tx.Commit(ctx)
 }
 
-func (d *DB) AdminDeleteArtifact(ctx context.Context, artifactID string) (AdminArtifact, error) {
+func (d *DB) AdminDeleteArtifact(ctx context.Context, artifactID string) (_ AdminArtifact, err error) {
 	tx, err := d.Pool.Begin(ctx)
 	if err != nil {
 		return AdminArtifact{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx, &err)
 	var artifact AdminArtifact
 	err = tx.QueryRow(ctx, `UPDATE artifacts a SET deleted_at=now(),updated_at=now() FROM users u
 		WHERE a.id=$1 AND a.deleted_at IS NULL AND u.id=a.owner_id
@@ -317,6 +317,16 @@ func (d *DB) AdminDeleteArtifact(ctx context.Context, artifactID string) (AdminA
 		return AdminArtifact{}, err
 	}
 	return artifact, tx.Commit(ctx)
+}
+
+type transactionRollbacker interface {
+	Rollback(context.Context) error
+}
+
+func rollbackTransaction(ctx context.Context, tx transactionRollbacker, errp *error) {
+	if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		*errp = errors.Join(*errp, err)
+	}
 }
 
 func (d *DB) CreateUpload(ctx context.Context, u Upload) error {
@@ -350,12 +360,12 @@ type CommitInput struct {
 	FileCount                                                                  int
 }
 
-func (d *DB) CommitVersion(ctx context.Context, in CommitInput) (Artifact, Version, error) {
+func (d *DB) CommitVersion(ctx context.Context, in CommitInput) (_ Artifact, _ Version, err error) {
 	tx, err := d.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
 		return Artifact{}, Version{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx, &err)
 	artifactID := in.ArtifactID
 	if artifactID == "" {
 		artifactID = "a_" + in.UploadID
@@ -428,12 +438,12 @@ func (d *DB) CreateShare(ctx context.Context, s Share, tokenHash []byte) error {
 	return err
 }
 
-func (d *DB) ExchangeShare(ctx context.Context, tokenHash, sessionHash []byte, expires time.Time) (Share, error) {
+func (d *DB) ExchangeShare(ctx context.Context, tokenHash, sessionHash []byte, expires time.Time) (_ Share, err error) {
 	tx, err := d.Pool.Begin(ctx)
 	if err != nil {
 		return Share{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer rollbackTransaction(ctx, tx, &err)
 	var s Share
 	err = tx.QueryRow(ctx, `UPDATE shares SET view_count=view_count+1 WHERE token_hash=$1 AND revoked_at IS NULL
 		AND (expires_at IS NULL OR expires_at>now()) AND (view_limit IS NULL OR view_count<view_limit)
