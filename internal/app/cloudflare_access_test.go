@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,6 +105,17 @@ func TestVerifyCloudflareAccessBearerUsesSameJWTContract(t *testing.T) {
 	}
 	if _, err := s.verifyCloudflareAccessJWT(context.Background(), signAccessJWT(t, signer, issuer, audience, map[string]any{"sub": "agent-subject", "email": "agent@example.com", "type": "org"})); err == nil {
 		t.Fatal("non-application bearer token accepted")
+	}
+}
+
+func TestMCPCloudflareAccessUsesAssertionHeader(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "https://rendercase.example.com/mcp", nil)
+	request.Header.Set("Authorization", "Bearer opaque-oauth-access-token")
+	s := &Server{cfg: config.Config{AuthMode: config.AuthModeCloudflareAccess}}
+
+	_, err := s.mcpBearerUser(request)
+	if err == nil || !strings.Contains(err.Error(), "Cloudflare Access JWT") || strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("mcp bearer error = %v", err)
 	}
 }
 

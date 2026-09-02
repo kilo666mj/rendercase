@@ -50,11 +50,7 @@ func (s *Server) requireBearer(next http.Handler) http.Handler {
 
 func (s *Server) mcpBearerUser(r *http.Request) (store.User, error) {
 	if s.cfg.AuthMode == config.AuthModeCloudflareAccess {
-		header := r.Header.Get("Authorization")
-		if !strings.HasPrefix(header, "Bearer ") {
-			return store.User{}, errors.New("bearer token required")
-		}
-		return s.cloudflareAccessUserFromJWT(r.Context(), strings.TrimPrefix(header, "Bearer "))
+		return s.cloudflareAccessUser(r)
 	}
 	return s.bearerUser(r)
 }
