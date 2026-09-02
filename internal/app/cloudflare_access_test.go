@@ -108,14 +108,42 @@ func TestVerifyCloudflareAccessBearerUsesSameJWTContract(t *testing.T) {
 	}
 }
 
-func TestMCPCloudflareAccessUsesAssertionHeader(t *testing.T) {
+func TestRequireBearerCloudflareAccessDoesNotRequireAuthorizationHeader(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "https://rendercase.example.com/mcp", nil)
-	request.Header.Set("Authorization", "Bearer opaque-oauth-access-token")
+	request.Header.Set(cfAccessJWTHeader, "edge-injected-assertion")
 	s := &Server{cfg: config.Config{AuthMode: config.AuthModeCloudflareAccess}}
+	response := httptest.NewRecorder()
 
-	_, err := s.mcpBearerUser(request)
-	if err == nil || !strings.Contains(err.Error(), "Cloudflare Access JWT") || strings.Contains(err.Error(), "invalid") {
-		t.Fatalf("mcp bearer error = %v", err)
+	s.requireBearer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("unverified request reached MCP handler")
+	})).ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", response.Code)
+	}
+	if body := response.Body.String(); !strings.Contains(body, "Cloudflare Access verifier") || strings.Contains(body, "bearer token required") {
+		t.Fatalf("body = %q", body)
+	}
+	if got := response.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("WWW-Authenticate = %q, want empty", got)
+	}
+}
+
+func TestRequireBearerOIDCStillChallengesMissingAuthorizationHeader(t *testing.T) {
+	publicURL, err := url.Parse("https://rendercase.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{cfg: config.Config{AuthMode: config.AuthModeOIDC, PublicURL: publicURL}}
+	response := httptest.NewRecorder()
+
+	s.requireBearer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("unauthenticated request reached MCP handler")
+	})).ServeHTTP(response, httptest.NewRequest(http.MethodPost, publicURL.JoinPath("mcp").String(), nil))
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "bearer token required") {
+		t.Fatalf("response = %d %q", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("WWW-Authenticate"); !strings.Contains(got, `resource_metadata="https://rendercase.example.com/.well-known/oauth-protected-resource/mcp"`) {
+		t.Fatalf("WWW-Authenticate = %q", got)
 	}
 }
 

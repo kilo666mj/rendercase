@@ -91,13 +91,13 @@ Prerequisites:
    application. Rendercase verifies `Cf-Access-Jwt-Assertion` itself against
    the team JWKS and requires the configured issuer and audience. Groups are
    optional custom Access JWT claims. Keep `RENDERCASE_OIDC_ISSUER` and the MCP
-   OAuth settings configured if agents and CLI clients use OIDC bearer tokens;
-   the OIDC client ID, secret, and redirect URL are not needed for browser
-   authentication in this mode. MCP clients may instead send the same
-   Cloudflare Access application JWT as `Authorization: Bearer <jwt>` to
-   `/mcp`. Rendercase verifies it with the configured Access issuer, JWKS, and
-   audience, maps `custom.groups` through `RENDERCASE_ADMIN_GROUPS`, and does
-   not require the OIDC scope claim on that Access assertion.
+   OAuth settings configured so agents and CLI clients can complete OAuth with
+   Cloudflare Access. Clients send the resulting bearer token to Cloudflare,
+   which validates it at the edge, removes `Authorization`, and injects
+   `Cf-Access-Jwt-Assertion` for the origin. Rendercase verifies that assertion
+   with the configured Access issuer, JWKS, and audience, maps `custom.groups`
+   through `RENDERCASE_ADMIN_GROUPS`, and does not require an `Authorization`
+   header at the origin.
 
    Access policy still runs before Rendercase. If capability share links should
    remain usable without an account, configure more-specific Access bypasses
@@ -107,7 +107,8 @@ Prerequisites:
    edge request-size and rate limits to it. Do **not** bypass
    `/api/v1/uploads/*`; the nested commit endpoint requires an authenticated
    user. Likewise, allow the OAuth or service-auth path used by your clients to
-   reach `/mcp`; Rendercase independently enforces its bearer token there.
+   reach `/mcp`; Rendercase verifies the Access assertion Cloudflare injects
+   after authenticating that request.
    Restrict direct origin access even though assertions are verified, because a
    valid assertion remains a bearer credential until it expires.
 
