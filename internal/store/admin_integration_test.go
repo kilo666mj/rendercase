@@ -21,9 +21,13 @@ func TestAdminArtifactLifecycleIntegration(t *testing.T) {
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("second migration: %v", err)
+	}
 	if _, err := db.Pool.Exec(ctx, `
 		INSERT INTO users(id,oidc_subject,username,email,display_name,is_admin) VALUES
 		('u_owner','owner-sub','owner','owner@example.com','Owner',false),
+		('u_viewer','viewer-sub','viewer','viewer@example.com','Viewer',false),
 		('u_admin','admin-sub','admin','admin@example.com','Admin',true);
 		INSERT INTO artifacts(id,owner_id,title,latest_version) VALUES('a_test','u_owner','Test artifact',1);
 		INSERT INTO artifact_versions(artifact_id,version,title,entrypoint,object_dir,manifest,manifest_sha256,byte_size,file_count,created_by)
@@ -37,8 +41,23 @@ func TestAdminArtifactLifecycleIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM artifacts WHERE id='a_test'; DELETE FROM users WHERE id IN ('u_owner','u_admin')`)
+		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM artifacts WHERE id='a_test'; DELETE FROM users WHERE id IN ('u_owner','u_viewer','u_admin')`)
 	})
+
+	if _, err := db.ArtifactForUser(ctx, "a_test", "u_viewer"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("private artifact accessible to another account: %v", err)
+	}
+	visible, err := db.SetArtifactVisibility(ctx, "a_test", "u_owner", "authenticated")
+	if err != nil || visible.Visibility != "authenticated" {
+		t.Fatalf("set authenticated visibility = %+v, %v", visible, err)
+	}
+	viewerArtifact, err := db.ArtifactForUser(ctx, "a_test", "u_viewer")
+	if err != nil || viewerArtifact.Role != "viewer" || viewerArtifact.Visibility != "authenticated" {
+		t.Fatalf("authenticated artifact for viewer = %+v, %v", viewerArtifact, err)
+	}
+	if _, err := db.SetArtifactVisibility(ctx, "a_test", "u_viewer", "private"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("non-owner changed visibility: %v", err)
+	}
 
 	artifacts, err := db.ListAdminArtifacts(ctx)
 	if err != nil {

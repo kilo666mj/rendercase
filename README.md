@@ -215,6 +215,12 @@ The equivalent REST flow is:
 
 Upload tokens are deliberately not accepted in query strings.
 
+Artifact owners can keep an artifact `private` or set it to `authenticated`,
+which makes it discoverable and viewable by every signed-in Rendercase account.
+`PUT /api/v1/artifacts/{artifact}/visibility` changes that setting. Anonymous
+access remains separate and is available only through revocable capability
+links.
+
 Administrators additionally have these endpoints:
 
 - `GET /api/v1/admin/artifacts` lists all active artifacts, owners, and active
@@ -238,6 +244,7 @@ Available MCP tools:
 - `rendercase_publish`
 - `rendercase_create_upload`
 - `rendercase_commit_upload`
+- `rendercase_set_visibility`
 - `rendercase_share`
 - `rendercase_revoke_share`
 - `rendercase_admin_list` (administrators only)

@@ -42,6 +42,7 @@ func TestViewerShowsSharingControlsOnlyToOwner(t *testing.T) {
 	data := map[string]any{
 		"User":          &store.User{DisplayName: "Owner"},
 		"Version":       store.Version{ArtifactID: "a_example", Version: 3, Title: "Example"},
+		"Artifact":      store.Artifact{Visibility: "authenticated"},
 		"ContentSource": "https://content.example/t/ticket/a_example/3/index.html",
 		"CanShare":      true,
 	}
@@ -49,7 +50,7 @@ func TestViewerShowsSharingControlsOnlyToOwner(t *testing.T) {
 	if err := tpl.ExecuteTemplate(&rendered, "viewer", data); err != nil {
 		t.Fatal(err)
 	}
-	for _, wanted := range []string{`stroke="#67e8f9"`, `fill="#2dd4bf"`, `id="share-open"`, `id="share-dialog"`, `data-artifact="a_example"`, `Manage sharing`, `Create a new link`, `Create link for version 3`} {
+	for _, wanted := range []string{`stroke="#67e8f9"`, `fill="#2dd4bf"`, `id="share-open"`, `id="share-dialog"`, `data-artifact="a_example"`, `Manage sharing`, `Anyone with a Rendercase account can view`, `id="account-visible" type="checkbox" checked`, `Create a new link`, `Create link for version 3`} {
 		if !strings.Contains(rendered.String(), wanted) {
 			t.Errorf("owner viewer missing %q", wanted)
 		}

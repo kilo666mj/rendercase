@@ -172,6 +172,10 @@ type revokeShareInput struct {
 type revokeShareOutput struct {
 	ArtifactID string `json:"artifact_id"`
 }
+type visibilityInput struct {
+	ArtifactID string `json:"artifact_id" jsonschema:"required"`
+	Visibility string `json:"visibility" jsonschema:"required,private or authenticated"`
+}
 type adminListOutput struct {
 	Artifacts []store.AdminArtifact `json:"artifacts"`
 }
@@ -285,6 +289,14 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		s.auditContext(ctx, user.ID, "", a.ID, "share.create", map[string]any{"share_id": id, "version": in.Version, "expires_at": in.ExpiresAt, "view_limit": in.ViewLimit, "interface": "mcp"})
 		out := shareOutput{ShareID: id, URL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/s/" + plain}
 		return textResult("Capability link created: " + out.URL), out, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_set_visibility", Description: "Set an owned artifact to private or make it visible to every authenticated Rendercase account.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in visibilityInput) (*mcp.CallToolResult, store.Artifact, error) {
+		a, err := s.db.SetArtifactVisibility(ctx, in.ArtifactID, user.ID, in.Visibility)
+		if err != nil {
+			return nil, store.Artifact{}, err
+		}
+		s.auditContext(ctx, user.ID, "", a.ID, "artifact.visibility.update", map[string]any{"visibility": a.Visibility, "interface": "mcp"})
+		return textResult("Artifact visibility set to " + a.Visibility + "."), a, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_revoke_share", Description: "Immediately revoke a capability share owned by the authenticated user.", Annotations: mcpkit.Destructive(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in revokeShareInput) (*mcp.CallToolResult, revokeShareOutput, error) {
 		artifactID, err := s.db.RevokeShare(ctx, in.ShareID, user.ID)

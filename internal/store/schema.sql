@@ -39,11 +39,19 @@ CREATE TABLE IF NOT EXISTS artifacts (
     owner_id text NOT NULL REFERENCES users(id),
     slug text NOT NULL DEFAULT '',
     title text NOT NULL,
+    visibility text NOT NULL DEFAULT 'private',
     latest_version integer NOT NULL DEFAULT 0,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     deleted_at timestamptz
 );
+ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS visibility text NOT NULL DEFAULT 'private';
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='artifacts_visibility_check' AND conrelid='artifacts'::regclass) THEN
+        ALTER TABLE artifacts ADD CONSTRAINT artifacts_visibility_check CHECK (visibility IN ('private', 'authenticated'));
+    END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS artifacts_authenticated_idx ON artifacts(updated_at DESC) WHERE deleted_at IS NULL AND visibility='authenticated';
 CREATE INDEX IF NOT EXISTS artifacts_owner_idx ON artifacts(owner_id, updated_at DESC) WHERE deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS artifact_grants (

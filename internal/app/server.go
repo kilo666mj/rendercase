@@ -106,6 +106,7 @@ func (s *Server) Handler() http.Handler {
 	mainMux.Handle("POST /api/v1/uploads/{upload}/commit", s.requireUser(http.HandlerFunc(s.commitUpload)))
 	mainMux.Handle("POST /api/v1/artifacts/{artifact}/shares", s.requireUser(http.HandlerFunc(s.createShare)))
 	mainMux.Handle("GET /api/v1/artifacts/{artifact}/shares", s.requireUser(http.HandlerFunc(s.listShares)))
+	mainMux.Handle("PUT /api/v1/artifacts/{artifact}/visibility", s.requireUser(http.HandlerFunc(s.setArtifactVisibility)))
 	mainMux.Handle("DELETE /api/v1/shares/{share}", s.requireUser(http.HandlerFunc(s.revokeShare)))
 	mainMux.Handle("GET /api/v1/admin/artifacts", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminListArtifacts))))
 	mainMux.Handle("DELETE /api/v1/admin/shares/{share}", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminRevokeShare))))
@@ -411,6 +412,7 @@ func (s *Server) viewer(w http.ResponseWriter, r *http.Request) {
 	artifactID := r.PathValue("artifact")
 	var u *store.User
 	var v store.Version
+	var artifact store.Artifact
 	canShare := false
 	if session, err := s.browserUser(r); err == nil {
 		a, err := s.db.ArtifactForUser(r.Context(), artifactID, session.ID)
@@ -424,6 +426,7 @@ func (s *Server) viewer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		u = &session
+		artifact = a
 		canShare = a.Role == "owner"
 	} else if c, err := r.Cookie(shareCookieName); err == nil {
 		share, err := s.db.ShareBySession(r.Context(), securetoken.Hash(c.Value))
@@ -443,7 +446,7 @@ func (s *Server) viewer(w http.ResponseWriter, r *http.Request) {
 	subject := v.ArtifactID + ":" + strconv.Itoa(v.Version)
 	ticket := securetoken.Sign(s.cfg.CookieSecret, subject, time.Now().Add(s.cfg.ViewerTicketTTL))
 	source := strings.TrimRight(s.cfg.ContentURL.String(), "/") + "/t/" + ticket + "/" + url.PathEscape(v.ArtifactID) + "/" + strconv.Itoa(v.Version) + "/" + escapePath(v.Entrypoint)
-	_ = s.tpl.ExecuteTemplate(w, "viewer", map[string]any{"User": u, "Version": v, "ContentSource": source, "CanShare": canShare})
+	_ = s.tpl.ExecuteTemplate(w, "viewer", map[string]any{"User": u, "Version": v, "Artifact": artifact, "ContentSource": source, "CanShare": canShare})
 }
 
 func (s *Server) content(w http.ResponseWriter, r *http.Request) {
@@ -692,6 +695,28 @@ func (s *Server) listShares(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"shares": shares})
+}
+func (s *Server) setArtifactVisibility(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Visibility string `json:"visibility"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	u := currentUser(r)
+	a, err := s.db.SetArtifactVisibility(r.Context(), r.PathValue("artifact"), u.ID, in.Visibility)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusForbidden, "artifact owner access required")
+		} else if errors.Is(err, store.ErrInvalidVisibility) {
+			writeError(w, http.StatusBadRequest, err.Error())
+		} else {
+			s.fail(w, r, err)
+		}
+		return
+	}
+	s.audit(r, u.ID, "", a.ID, "artifact.visibility.update", map[string]any{"visibility": a.Visibility})
+	writeJSON(w, http.StatusOK, map[string]any{"artifact": a})
 }
 func (s *Server) exchangeShare(w http.ResponseWriter, r *http.Request) {
 	plain, hash, err := securetoken.Secret()

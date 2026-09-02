@@ -57,7 +57,7 @@ func TestAdminMCPToolsAreVisibleOnlyToAdministrators(t *testing.T) {
 			}
 			want := []string{
 				"rendercase_commit_upload", "rendercase_create_upload", "rendercase_get",
-				"rendercase_list", "rendercase_publish", "rendercase_revoke_share", "rendercase_share",
+				"rendercase_list", "rendercase_publish", "rendercase_revoke_share", "rendercase_set_visibility", "rendercase_share",
 			}
 			if test.admin {
 				want = append(want, "rendercase_admin_delete_artifact", "rendercase_admin_list", "rendercase_admin_revoke_share")

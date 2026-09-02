@@ -15,7 +15,10 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound          = errors.New("not found")
+	ErrInvalidVisibility = errors.New("visibility must be private or authenticated")
+)
 
 type DB struct{ Pool *pgxpool.Pool }
 
@@ -35,10 +38,10 @@ type Principal struct {
 }
 
 type Artifact struct {
-	ID, OwnerID, Slug, Title string
-	LatestVersion            int
-	CreatedAt, UpdatedAt     time.Time
-	Role                     string
+	ID, OwnerID, Slug, Title, Visibility string
+	LatestVersion                        int
+	CreatedAt, UpdatedAt                 time.Time
+	Role                                 string
 }
 
 type AdminArtifact struct {
@@ -210,10 +213,10 @@ func (d *DB) ConsumeOIDCState(ctx context.Context, hash []byte) (verifier, nonce
 }
 
 func (d *DB) ListArtifacts(ctx context.Context, userID string) ([]Artifact, error) {
-	rows, err := d.Pool.Query(ctx, `SELECT a.id,a.owner_id,a.slug,a.title,a.latest_version,a.created_at,a.updated_at,
-		CASE WHEN a.owner_id=$1 THEN 'owner' ELSE g.role END
+	rows, err := d.Pool.Query(ctx, `SELECT a.id,a.owner_id,a.slug,a.title,a.visibility,a.latest_version,a.created_at,a.updated_at,
+		CASE WHEN a.owner_id=$1 THEN 'owner' ELSE COALESCE(g.role,'viewer') END
 		FROM artifacts a LEFT JOIN artifact_grants g ON g.artifact_id=a.id AND g.user_id=$1
-		WHERE a.deleted_at IS NULL AND (a.owner_id=$1 OR g.user_id IS NOT NULL) ORDER BY a.updated_at DESC`, userID)
+		WHERE a.deleted_at IS NULL AND (a.owner_id=$1 OR g.user_id IS NOT NULL OR a.visibility='authenticated') ORDER BY a.updated_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +224,7 @@ func (d *DB) ListArtifacts(ctx context.Context, userID string) ([]Artifact, erro
 	var out []Artifact
 	for rows.Next() {
 		var a Artifact
-		if err := rows.Scan(&a.ID, &a.OwnerID, &a.Slug, &a.Title, &a.LatestVersion, &a.CreatedAt, &a.UpdatedAt, &a.Role); err != nil {
+		if err := rows.Scan(&a.ID, &a.OwnerID, &a.Slug, &a.Title, &a.Visibility, &a.LatestVersion, &a.CreatedAt, &a.UpdatedAt, &a.Role); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -231,16 +234,31 @@ func (d *DB) ListArtifacts(ctx context.Context, userID string) ([]Artifact, erro
 
 func (d *DB) ArtifactForUser(ctx context.Context, artifactID, userID string) (Artifact, error) {
 	var a Artifact
-	err := d.Pool.QueryRow(ctx, `SELECT a.id,a.owner_id,a.slug,a.title,a.latest_version,a.created_at,a.updated_at,
-		CASE WHEN a.owner_id=$2 THEN 'owner' ELSE g.role END FROM artifacts a
+	err := d.Pool.QueryRow(ctx, `SELECT a.id,a.owner_id,a.slug,a.title,a.visibility,a.latest_version,a.created_at,a.updated_at,
+		CASE WHEN a.owner_id=$2 THEN 'owner' ELSE COALESCE(g.role,'viewer') END FROM artifacts a
 		LEFT JOIN artifact_grants g ON g.artifact_id=a.id AND g.user_id=$2
-		WHERE a.id=$1 AND a.deleted_at IS NULL AND (a.owner_id=$2 OR g.user_id IS NOT NULL)`, artifactID, userID).
-		Scan(&a.ID, &a.OwnerID, &a.Slug, &a.Title, &a.LatestVersion, &a.CreatedAt, &a.UpdatedAt, &a.Role)
+		WHERE a.id=$1 AND a.deleted_at IS NULL AND (a.owner_id=$2 OR g.user_id IS NOT NULL OR a.visibility='authenticated')`, artifactID, userID).
+		Scan(&a.ID, &a.OwnerID, &a.Slug, &a.Title, &a.Visibility, &a.LatestVersion, &a.CreatedAt, &a.UpdatedAt, &a.Role)
 	return a, translate(err)
 }
 
+func (d *DB) SetArtifactVisibility(ctx context.Context, artifactID, userID, visibility string) (Artifact, error) {
+	if visibility != "private" && visibility != "authenticated" {
+		return Artifact{}, ErrInvalidVisibility
+	}
+	ct, err := d.Pool.Exec(ctx, `UPDATE artifacts SET visibility=$3,updated_at=now()
+		WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL`, artifactID, userID, visibility)
+	if err != nil {
+		return Artifact{}, err
+	}
+	if ct.RowsAffected() != 1 {
+		return Artifact{}, ErrNotFound
+	}
+	return d.ArtifactForUser(ctx, artifactID, userID)
+}
+
 func (d *DB) ListAdminArtifacts(ctx context.Context) ([]AdminArtifact, error) {
-	rows, err := d.Pool.Query(ctx, `SELECT a.id,a.owner_id,a.slug,a.title,a.latest_version,a.created_at,a.updated_at,
+	rows, err := d.Pool.Query(ctx, `SELECT a.id,a.owner_id,a.slug,a.title,a.visibility,a.latest_version,a.created_at,a.updated_at,
 		u.email,u.display_name FROM artifacts a JOIN users u ON u.id=a.owner_id
 		WHERE a.deleted_at IS NULL ORDER BY a.updated_at DESC`)
 	if err != nil {
@@ -251,7 +269,7 @@ func (d *DB) ListAdminArtifacts(ctx context.Context) ([]AdminArtifact, error) {
 	byID := make(map[string]int)
 	for rows.Next() {
 		var a AdminArtifact
-		if err := rows.Scan(&a.ID, &a.OwnerID, &a.Slug, &a.Title, &a.LatestVersion, &a.CreatedAt, &a.UpdatedAt, &a.OwnerEmail, &a.OwnerDisplayName); err != nil {
+		if err := rows.Scan(&a.ID, &a.OwnerID, &a.Slug, &a.Title, &a.Visibility, &a.LatestVersion, &a.CreatedAt, &a.UpdatedAt, &a.OwnerEmail, &a.OwnerDisplayName); err != nil {
 			return nil, err
 		}
 		a.Role = "admin"
@@ -305,8 +323,8 @@ func (d *DB) AdminDeleteArtifact(ctx context.Context, artifactID string) (_ Admi
 	var artifact AdminArtifact
 	err = tx.QueryRow(ctx, `UPDATE artifacts a SET deleted_at=now(),updated_at=now() FROM users u
 		WHERE a.id=$1 AND a.deleted_at IS NULL AND u.id=a.owner_id
-		RETURNING a.id,a.owner_id,a.slug,a.title,a.latest_version,a.created_at,a.updated_at,u.email,u.display_name`, artifactID).
-		Scan(&artifact.ID, &artifact.OwnerID, &artifact.Slug, &artifact.Title, &artifact.LatestVersion, &artifact.CreatedAt, &artifact.UpdatedAt, &artifact.OwnerEmail, &artifact.OwnerDisplayName)
+		RETURNING a.id,a.owner_id,a.slug,a.title,a.visibility,a.latest_version,a.created_at,a.updated_at,u.email,u.display_name`, artifactID).
+		Scan(&artifact.ID, &artifact.OwnerID, &artifact.Slug, &artifact.Title, &artifact.Visibility, &artifact.LatestVersion, &artifact.CreatedAt, &artifact.UpdatedAt, &artifact.OwnerEmail, &artifact.OwnerDisplayName)
 	if err != nil {
 		return AdminArtifact{}, translate(err)
 	}
