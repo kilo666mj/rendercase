@@ -98,6 +98,7 @@ func (s *Server) Handler() http.Handler {
 	mainMux.Handle("GET /{$}", s.requireUser(http.HandlerFunc(s.index)))
 	mainMux.Handle("GET /admin", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminIndex))))
 	mainMux.HandleFunc("GET /a/{artifact}", s.viewer)
+	mainMux.HandleFunc("GET /shared/{artifact}", s.sharedViewer)
 	mainMux.Handle("GET /api/v1/artifacts", s.requireUser(http.HandlerFunc(s.listArtifacts)))
 	mainMux.Handle("POST /api/v1/artifacts/uploads", s.requireUser(http.HandlerFunc(s.createUpload)))
 	mainMux.HandleFunc("PUT /upload/{upload}", s.putUpload)
@@ -411,43 +412,48 @@ func (s *Server) adminIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) viewer(w http.ResponseWriter, r *http.Request) {
 	artifactID := r.PathValue("artifact")
-	var u *store.User
-	var v store.Version
-	var artifact store.Artifact
-	canShare := false
-	if session, err := s.browserUser(r); err == nil {
-		a, err := s.db.ArtifactForUser(r.Context(), artifactID, session.ID)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		v, err = s.db.Version(r.Context(), a.ID, a.LatestVersion)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		u = &session
-		artifact = a
-		canShare = a.Role == "owner"
-	} else if c, err := r.Cookie(shareCookieName); err == nil {
-		share, err := s.db.ShareBySession(r.Context(), securetoken.Hash(c.Value))
-		if err != nil || share.ArtifactID != artifactID {
-			http.NotFound(w, r)
-			return
-		}
-		v, err = s.db.VersionForShare(r.Context(), share.ID)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-	} else {
+	session, err := s.browserUser(r)
+	if err != nil {
 		http.Redirect(w, r, "/auth/login?return="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 		return
 	}
+	artifact, err := s.db.ArtifactForUser(r.Context(), artifactID, session.ID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	v, err := s.db.Version(r.Context(), artifact.ID, artifact.LatestVersion)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.renderViewer(w, v, artifact, &session, artifact.Role == "owner")
+}
+
+func (s *Server) sharedViewer(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie(shareCookieName)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	share, err := s.db.ShareBySession(r.Context(), securetoken.Hash(cookie.Value))
+	if err != nil || share.ArtifactID != r.PathValue("artifact") {
+		http.NotFound(w, r)
+		return
+	}
+	v, err := s.db.VersionForShare(r.Context(), share.ID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.renderViewer(w, v, store.Artifact{}, nil, false)
+}
+
+func (s *Server) renderViewer(w http.ResponseWriter, v store.Version, artifact store.Artifact, user *store.User, canShare bool) {
 	subject := v.ArtifactID + ":" + strconv.Itoa(v.Version)
 	ticket := securetoken.Sign(s.cfg.CookieSecret, subject, time.Now().Add(s.cfg.ViewerTicketTTL))
 	source := strings.TrimRight(s.cfg.ContentURL.String(), "/") + "/t/" + ticket + "/" + url.PathEscape(v.ArtifactID) + "/" + strconv.Itoa(v.Version) + "/" + escapePath(v.Entrypoint)
-	_ = s.tpl.ExecuteTemplate(w, "viewer", map[string]any{"User": u, "Version": v, "Artifact": artifact, "ContentSource": source, "CanShare": canShare})
+	_ = s.tpl.ExecuteTemplate(w, "viewer", map[string]any{"User": user, "Version": v, "Artifact": artifact, "ContentSource": source, "CanShare": canShare})
 }
 
 func (s *Server) content(w http.ResponseWriter, r *http.Request) {
@@ -733,8 +739,10 @@ func (s *Server) exchangeShare(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "", share.ID, share.ArtifactID, "share.view", map[string]any{"view_count": share.ViewCount})
 	setCookie(w, shareCookieName, plain, expires, true)
-	http.Redirect(w, r, "/a/"+share.ArtifactID, http.StatusFound)
+	http.Redirect(w, r, sharedArtifactPath(share.ArtifactID), http.StatusFound)
 }
+
+func sharedArtifactPath(artifactID string) string { return "/shared/" + url.PathEscape(artifactID) }
 func (s *Server) revokeShare(w http.ResponseWriter, r *http.Request) {
 	u := currentUser(r)
 	shareID := r.PathValue("share")

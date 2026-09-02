@@ -101,10 +101,12 @@ Prerequisites:
 
    Access policy still runs before Rendercase. If capability share links should
    remain usable without an account, configure more-specific Access bypasses
-   for `/s/*`, `/a/*`, and `/static/*`. Large artifact publishing also requires
-   an exact `/upload/*` bypass: that path accepts only `PUT` and Rendercase
-   authenticates it with a high-entropy, short-lived upload capability. Apply
-   edge request-size and rate limits to it. Do **not** bypass
+   for `/s/*`, `/shared/*`, and `/static/*`. Keep `/a/*` protected: signed-in
+   artifact views require the Cloudflare assertion, while `/shared/*` accepts
+   only the share-session cookie established by `/s/*`. Large artifact
+   publishing also requires an exact `/upload/*` bypass: that path accepts only
+   `PUT` and Rendercase authenticates it with a high-entropy, short-lived upload
+   capability. Apply edge request-size and rate limits to it. Do **not** bypass
    `/api/v1/uploads/*`; the nested commit endpoint requires an authenticated
    user. Likewise, allow the OAuth or service-auth path used by your clients to
    reach `/mcp`; Rendercase verifies the Access assertion Cloudflare injects

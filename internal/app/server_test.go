@@ -184,6 +184,34 @@ func TestUploadCapabilityPathAcceptsOnlyPUT(t *testing.T) {
 	}
 }
 
+func TestViewerRoutesSeparateUserAndShareAuthentication(t *testing.T) {
+	s := &Server{cfg: config.Config{
+		AuthMode:   config.AuthModeOIDC,
+		PublicURL:  mustParseURL(t, "https://rendercase.example/"),
+		ContentURL: mustParseURL(t, "https://content.rendercase.example/"),
+	}, mcp: http.NotFoundHandler()}
+
+	response := httptest.NewRecorder()
+	privateRequest := httptest.NewRequest(http.MethodGet, "https://rendercase.example/a/a_example", nil)
+	privateRequest.AddCookie(&http.Cookie{Name: shareCookieName, Value: "share-session"})
+	s.Handler().ServeHTTP(response, privateRequest)
+	if response.Code != http.StatusFound || response.Header().Get("Location") != "/auth/login?return=%2Fa%2Fa_example" {
+		t.Fatalf("private viewer response = %d, location %q", response.Code, response.Header().Get("Location"))
+	}
+
+	response = httptest.NewRecorder()
+	sharedRequest := httptest.NewRequest(http.MethodGet, "https://rendercase.example/shared/a_example", nil)
+	sharedRequest.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "user-session"})
+	s.Handler().ServeHTTP(response, sharedRequest)
+	if response.Code != http.StatusNotFound || response.Header().Get("Location") != "" {
+		t.Fatalf("shared viewer response = %d, location %q", response.Code, response.Header().Get("Location"))
+	}
+
+	if got, want := sharedArtifactPath("a_example"), "/shared/a_example"; got != want {
+		t.Fatalf("shared artifact path = %q, want %q", got, want)
+	}
+}
+
 func mustParseURL(t *testing.T, value string) *url.URL {
 	t.Helper()
 	parsed, err := url.Parse(value)
