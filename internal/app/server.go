@@ -33,16 +33,17 @@ import (
 var webFS embed.FS
 
 type Server struct {
-	cfg            config.Config
-	db             *store.DB
-	blobs          blob.Backend
-	oauth          oauth2.Config
-	verifier       *oidc.IDTokenVerifier
-	accessVerifier *oidc.IDTokenVerifier
-	cfVerifier     *oidc.IDTokenVerifier
-	tpl            *template.Template
-	log            *slog.Logger
-	mcp            http.Handler
+	cfg                  config.Config
+	db                   *store.DB
+	blobs                blob.Backend
+	oauth                oauth2.Config
+	verifier             *oidc.IDTokenVerifier
+	accessVerifier       *oidc.IDTokenVerifier
+	cfVerifier           *oidc.IDTokenVerifier
+	cloudflareUserUpsert func(context.Context, store.User) (store.User, error)
+	tpl                  *template.Template
+	log                  *slog.Logger
+	mcp                  http.Handler
 }
 
 type userContextKey struct{}

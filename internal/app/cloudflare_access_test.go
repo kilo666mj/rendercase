@@ -16,6 +16,7 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 
 	"github.com/kilo666mj/rendercase/internal/config"
+	"github.com/kilo666mj/rendercase/internal/store"
 )
 
 type rsaKeySet struct{ publicKey *rsa.PublicKey }
@@ -108,23 +109,75 @@ func TestVerifyCloudflareAccessBearerUsesSameJWTContract(t *testing.T) {
 	}
 }
 
-func TestRequireBearerCloudflareAccessDoesNotRequireAuthorizationHeader(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "https://rendercase.example.com/mcp", nil)
-	request.Header.Set(cfAccessJWTHeader, "edge-injected-assertion")
-	s := &Server{cfg: config.Config{AuthMode: config.AuthModeCloudflareAccess}}
+func TestRequireBearerCloudflareAccessAcceptsAssertionWithoutAuthorizationHeader(t *testing.T) {
+	const issuer = "https://example.cloudflareaccess.com"
+	const audience = "access-audience"
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicURL, err := url.Parse("https://rendercase.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{
+		cfg:        config.Config{AuthMode: config.AuthModeCloudflareAccess, PublicURL: publicURL},
+		cfVerifier: oidc.NewVerifier(issuer, rsaKeySet{publicKey: &key.PublicKey}, &oidc.Config{ClientID: audience}),
+		cloudflareUserUpsert: func(_ context.Context, user store.User) (store.User, error) {
+			user.ID = "cloudflare-user"
+			return user, nil
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, publicURL.JoinPath("mcp").String(), nil)
+	request.Header.Set(cfAccessJWTHeader, signAccessJWT(t, signer, issuer, audience, map[string]any{
+		"sub": "agent-subject", "email": "agent@example.com", "type": "app",
+	}))
 	response := httptest.NewRecorder()
+	called := false
 
-	s.requireBearer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Fatal("unverified request reached MCP handler")
+	s.requireBearer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if user := currentUser(r); user.ID != "cloudflare-user" || user.Subject != "cloudflare_access:agent-subject" {
+			t.Fatalf("current user = %+v", user)
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})).ServeHTTP(response, request)
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", response.Code)
+	if !called || response.Code != http.StatusNoContent {
+		t.Fatalf("called = %v, status = %d", called, response.Code)
 	}
-	if body := response.Body.String(); !strings.Contains(body, "Cloudflare Access verifier") || strings.Contains(body, "bearer token required") {
-		t.Fatalf("body = %q", body)
+}
+
+func TestRequireBearerCloudflareAccessRejectsMissingOrInvalidAssertion(t *testing.T) {
+	publicURL, err := url.Parse("https://rendercase.example.com")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := response.Header().Get("WWW-Authenticate"); got != "" {
-		t.Fatalf("WWW-Authenticate = %q, want empty", got)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{
+		cfg:        config.Config{AuthMode: config.AuthModeCloudflareAccess, PublicURL: publicURL},
+		cfVerifier: oidc.NewVerifier("https://example.cloudflareaccess.com", rsaKeySet{publicKey: &key.PublicKey}, &oidc.Config{ClientID: "access-audience"}),
+	}
+	for _, test := range []struct{ name, assertion string }{{name: "missing"}, {name: "invalid", assertion: "not-a-jwt"}} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, publicURL.JoinPath("mcp").String(), nil)
+			request.Header.Set(cfAccessJWTHeader, test.assertion)
+			response := httptest.NewRecorder()
+			called := false
+			s.requireBearer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })).ServeHTTP(response, request)
+			if called || response.Code != http.StatusUnauthorized {
+				t.Fatalf("called = %v, status = %d", called, response.Code)
+			}
+			if got := response.Header().Get("WWW-Authenticate"); !strings.Contains(got, `resource_metadata="https://rendercase.example.com/.well-known/oauth-protected-resource/mcp"`) {
+				t.Fatalf("WWW-Authenticate = %q", got)
+			}
+		})
 	}
 }
 

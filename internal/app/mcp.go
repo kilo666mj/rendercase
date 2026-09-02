@@ -35,9 +35,7 @@ func (s *Server) requireBearer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, err := s.mcpBearerUser(r)
 		if err != nil {
-			if s.cfg.AuthMode != config.AuthModeCloudflareAccess && !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
-				w.Header().Set("WWW-Authenticate", `Bearer realm="rendercase-mcp", error="invalid_token", resource_metadata="`+strings.TrimRight(s.cfg.PublicURL.String(), "/")+`/.well-known/oauth-protected-resource/mcp"`)
-			}
+			w.Header().Set("WWW-Authenticate", `Bearer realm="rendercase-mcp", error="invalid_token", resource_metadata="`+strings.TrimRight(s.cfg.PublicURL.String(), "/")+`/.well-known/oauth-protected-resource/mcp"`)
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}

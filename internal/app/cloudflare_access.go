@@ -25,8 +25,17 @@ func (s *Server) cloudflareAccessUserFromJWT(ctx context.Context, raw string) (s
 	if err != nil {
 		return store.User{}, err
 	}
-	admin := s.cloudflareAccessAdmin(identity)
-	return s.db.UpsertUser(ctx, "cloudflare_access:"+identity.Subject, identity.Username, identity.Email, identity.Name, admin)
+	user := store.User{
+		Subject:     "cloudflare_access:" + identity.Subject,
+		Username:    identity.Username,
+		Email:       identity.Email,
+		DisplayName: identity.Name,
+		Admin:       s.cloudflareAccessAdmin(identity),
+	}
+	if s.cloudflareUserUpsert != nil {
+		return s.cloudflareUserUpsert(ctx, user)
+	}
+	return s.db.UpsertUser(ctx, user.Subject, user.Username, user.Email, user.DisplayName, user.Admin)
 }
 
 func (s *Server) cloudflareAccessAdmin(identity cloudflareAccessIdentity) bool {
