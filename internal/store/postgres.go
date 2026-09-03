@@ -67,7 +67,7 @@ func (d *DB) UpdateBranding(ctx context.Context, b Branding) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	_, err = tx.Exec(ctx, `INSERT INTO branding_themes(name,site_name,tagline,hero_title,hero_highlight,hero_description,background_color,panel_color,text_color,muted_color,primary_color,accent_color,logo_mime,logo_data)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(name) DO UPDATE SET site_name=EXCLUDED.site_name,tagline=EXCLUDED.tagline,hero_title=EXCLUDED.hero_title,hero_highlight=EXCLUDED.hero_highlight,hero_description=EXCLUDED.hero_description,background_color=EXCLUDED.background_color,panel_color=EXCLUDED.panel_color,text_color=EXCLUDED.text_color,muted_color=EXCLUDED.muted_color,primary_color=EXCLUDED.primary_color,accent_color=EXCLUDED.accent_color,logo_mime=EXCLUDED.logo_mime,logo_data=EXCLUDED.logo_data,updated_at=now()`, b.ThemeName, b.SiteName, b.Tagline, b.HeroTitle, b.HeroHighlight, b.HeroDescription, b.BackgroundColor, b.PanelColor, b.TextColor, b.MutedColor, b.PrimaryColor, b.AccentColor, nullString(b.LogoMIME), nullBytes(b.LogoData))
 	if err != nil {
