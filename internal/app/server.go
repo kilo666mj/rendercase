@@ -16,6 +16,7 @@ import (
 	"net/netip"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -90,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 	mainMux.HandleFunc("GET /.well-known/oauth-protected-resource", s.oauthProtectedResource)
 	mainMux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", s.oauthProtectedResource)
 	mainMux.HandleFunc("GET /static/favicon.svg", s.favicon)
+	mainMux.HandleFunc("GET /static/brand-logo", s.brandLogo)
 	mainMux.HandleFunc("GET /static/style.css", s.style)
 	mainMux.HandleFunc("GET /auth/login", s.login)
 	mainMux.HandleFunc("GET /api/v1/auth/oidc/callback", s.callback)
@@ -111,6 +113,8 @@ func (s *Server) Handler() http.Handler {
 	mainMux.Handle("PUT /api/v1/artifacts/{artifact}/visibility", s.requireUser(http.HandlerFunc(s.setArtifactVisibility)))
 	mainMux.Handle("DELETE /api/v1/shares/{share}", s.requireUser(http.HandlerFunc(s.revokeShare)))
 	mainMux.Handle("GET /api/v1/admin/artifacts", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminListArtifacts))))
+	mainMux.Handle("GET /api/v1/admin/branding", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminBranding))))
+	mainMux.Handle("PUT /api/v1/admin/branding", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminBranding))))
 	mainMux.Handle("DELETE /api/v1/admin/shares/{share}", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminRevokeShare))))
 	mainMux.Handle("DELETE /api/v1/admin/artifacts/{artifact}", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminDeleteArtifact))))
 	mainMux.Handle("POST /mcp", s.mcp)
@@ -184,18 +188,44 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-func (s *Server) style(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) style(w http.ResponseWriter, r *http.Request) {
 	b, _ := webFS.ReadFile("web/style.css")
+	branding, err := s.db.Branding(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(b)
+	_, _ = fmt.Fprintf(w, "\n:root{--bg:%s;--panel:%s;--text:%s;--muted:%s;--accent:%s;--violet:%s;--cyan:%s;--line:%s24;--line-hot:%s61}\n", branding.BackgroundColor, branding.PanelColor, branding.TextColor, branding.MutedColor, branding.PrimaryColor, branding.AccentColor, branding.PrimaryColor, branding.PrimaryColor, branding.PrimaryColor)
 }
 
-func (s *Server) favicon(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) favicon(w http.ResponseWriter, r *http.Request) {
+	if s.db != nil {
+		if branding, err := s.db.Branding(r.Context()); err == nil && branding.HasLogo() {
+			w.Header().Set("Content-Type", branding.LogoMIME)
+			w.Header().Set("Cache-Control", "no-cache")
+			_, _ = w.Write(branding.LogoData)
+			return
+		}
+	}
 	b, _ := webFS.ReadFile("web/favicon.svg")
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	_, _ = w.Write(b)
+}
+
+func (s *Server) brandLogo(w http.ResponseWriter, r *http.Request) {
+	b, err := s.db.Branding(r.Context())
+	if err != nil || !b.HasLogo() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", b.LogoMIME)
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(b.LogoData)
 }
 
 func (s *Server) oauthProtectedResource(w http.ResponseWriter, _ *http.Request) {
@@ -338,7 +368,12 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 				return
 			}
 			if r.URL.Path == "/" && s.cfg.AuthMode == config.AuthModeOIDC {
-				_ = s.tpl.ExecuteTemplate(w, "login", nil)
+				branding, brandingErr := s.db.Branding(r.Context())
+				if brandingErr != nil {
+					s.fail(w, r, brandingErr)
+					return
+				}
+				_ = s.tpl.ExecuteTemplate(w, "login", map[string]any{"Branding": branding})
 				return
 			}
 			if s.cfg.AuthMode == config.AuthModeCloudflareAccess {
@@ -398,7 +433,12 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	_ = s.tpl.ExecuteTemplate(w, "index", map[string]any{"User": u, "Artifacts": artifacts})
+	branding, err := s.db.Branding(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	_ = s.tpl.ExecuteTemplate(w, "index", map[string]any{"User": u, "Artifacts": artifacts, "Branding": branding})
 }
 
 func (s *Server) adminIndex(w http.ResponseWriter, r *http.Request) {
@@ -407,7 +447,17 @@ func (s *Server) adminIndex(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	_ = s.tpl.ExecuteTemplate(w, "admin", map[string]any{"User": currentUser(r), "Artifacts": artifacts})
+	branding, err := s.db.Branding(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	themes, err := s.db.BrandingThemeNames(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	_ = s.tpl.ExecuteTemplate(w, "admin", map[string]any{"User": currentUser(r), "Artifacts": artifacts, "Branding": branding, "Themes": themes})
 }
 
 func (s *Server) viewer(w http.ResponseWriter, r *http.Request) {
@@ -427,7 +477,7 @@ func (s *Server) viewer(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.renderViewer(w, v, artifact, &session, artifact.Role == "owner")
+	s.renderViewer(r, w, v, artifact, &session, artifact.Role == "owner")
 }
 
 func (s *Server) sharedViewer(w http.ResponseWriter, r *http.Request) {
@@ -446,14 +496,115 @@ func (s *Server) sharedViewer(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.renderViewer(w, v, store.Artifact{}, nil, false)
+	s.renderViewer(r, w, v, store.Artifact{}, nil, false)
 }
 
-func (s *Server) renderViewer(w http.ResponseWriter, v store.Version, artifact store.Artifact, user *store.User, canShare bool) {
+func (s *Server) renderViewer(r *http.Request, w http.ResponseWriter, v store.Version, artifact store.Artifact, user *store.User, canShare bool) {
 	subject := v.ArtifactID + ":" + strconv.Itoa(v.Version)
 	ticket := securetoken.Sign(s.cfg.CookieSecret, subject, time.Now().Add(s.cfg.ViewerTicketTTL))
 	source := strings.TrimRight(s.cfg.ContentURL.String(), "/") + "/t/" + ticket + "/" + url.PathEscape(v.ArtifactID) + "/" + strconv.Itoa(v.Version) + "/" + escapePath(v.Entrypoint)
-	_ = s.tpl.ExecuteTemplate(w, "viewer", map[string]any{"User": user, "Version": v, "Artifact": artifact, "ContentSource": source, "CanShare": canShare})
+	branding, err := s.db.Branding(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	_ = s.tpl.ExecuteTemplate(w, "viewer", map[string]any{"User": user, "Version": v, "Artifact": artifact, "ContentSource": source, "CanShare": canShare, "Branding": branding})
+}
+
+var brandColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+func validateBranding(b store.Branding) error {
+	if len(b.ThemeName) < 1 || len(b.ThemeName) > 80 {
+		return errors.New("theme name is missing or too long")
+	}
+	if len(b.SiteName) < 1 || len(b.SiteName) > 80 || len(b.Tagline) > 120 || len(b.HeroTitle) > 120 || len(b.HeroHighlight) > 120 || len(b.HeroDescription) > 300 {
+		return errors.New("branding text is missing or too long")
+	}
+	for _, color := range []string{b.BackgroundColor, b.PanelColor, b.TextColor, b.MutedColor, b.PrimaryColor, b.AccentColor} {
+		if !brandColor.MatchString(color) {
+			return errors.New("colors must use six-digit hex values")
+		}
+	}
+	return nil
+}
+
+func (s *Server) adminBranding(w http.ResponseWriter, r *http.Request) {
+	current, err := s.db.Branding(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if r.Method == http.MethodGet {
+		current.LogoData = nil
+		writeJSON(w, http.StatusOK, current)
+		return
+	}
+	var in struct {
+		ThemeName       string  `json:"theme_name"`
+		ActivateTheme   string  `json:"activate_theme"`
+		SiteName        string  `json:"site_name"`
+		Tagline         string  `json:"tagline"`
+		HeroTitle       string  `json:"hero_title"`
+		HeroHighlight   string  `json:"hero_highlight"`
+		HeroDescription string  `json:"hero_description"`
+		BackgroundColor string  `json:"background_color"`
+		PanelColor      string  `json:"panel_color"`
+		TextColor       string  `json:"text_color"`
+		MutedColor      string  `json:"muted_color"`
+		PrimaryColor    string  `json:"primary_color"`
+		AccentColor     string  `json:"accent_color"`
+		LogoDataURL     *string `json:"logo_data_url"`
+		RemoveLogo      bool    `json:"remove_logo"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	if in.ActivateTheme != "" {
+		b, activateErr := s.db.ActivateBrandingTheme(r.Context(), in.ActivateTheme)
+		if activateErr != nil {
+			if errors.Is(activateErr, store.ErrNotFound) {
+				writeError(w, 404, "theme not found")
+			} else {
+				s.fail(w, r, activateErr)
+			}
+			return
+		}
+		s.audit(r, currentUser(r).ID, "", "", "admin.branding.activate", map[string]any{"theme_name": b.ThemeName})
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	b := store.Branding{ThemeName: strings.TrimSpace(in.ThemeName), SiteName: strings.TrimSpace(in.SiteName), Tagline: strings.TrimSpace(in.Tagline), HeroTitle: strings.TrimSpace(in.HeroTitle), HeroHighlight: strings.TrimSpace(in.HeroHighlight), HeroDescription: strings.TrimSpace(in.HeroDescription), BackgroundColor: in.BackgroundColor, PanelColor: in.PanelColor, TextColor: in.TextColor, MutedColor: in.MutedColor, PrimaryColor: in.PrimaryColor, AccentColor: in.AccentColor, LogoMIME: current.LogoMIME, LogoData: current.LogoData}
+	if err := validateBranding(b); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	if in.RemoveLogo {
+		b.LogoMIME, b.LogoData = "", nil
+	}
+	if in.LogoDataURL != nil && *in.LogoDataURL != "" {
+		parts := strings.SplitN(*in.LogoDataURL, ",", 2)
+		if len(parts) != 2 {
+			writeError(w, 400, "invalid logo")
+			return
+		}
+		mimeType := strings.TrimSuffix(strings.TrimPrefix(parts[0], "data:"), ";base64")
+		if parts[0] != "data:"+mimeType+";base64" || (mimeType != "image/png" && mimeType != "image/jpeg" && mimeType != "image/webp") {
+			writeError(w, 400, "logo must be PNG, JPEG, or WebP")
+			return
+		}
+		data, decodeErr := base64.StdEncoding.DecodeString(parts[1])
+		if decodeErr != nil || len(data) == 0 || len(data) > 512<<10 || http.DetectContentType(data) != mimeType {
+			writeError(w, 400, "logo is invalid or larger than 512 KiB")
+			return
+		}
+		b.LogoMIME, b.LogoData = mimeType, data
+	}
+	if err := s.db.UpdateBranding(r.Context(), b); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.audit(r, currentUser(r).ID, "", "", "admin.branding.update", map[string]any{"site_name": b.SiteName, "logo": b.HasLogo()})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) content(w http.ResponseWriter, r *http.Request) {

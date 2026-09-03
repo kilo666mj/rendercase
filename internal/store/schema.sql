@@ -134,3 +134,43 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 CREATE INDEX IF NOT EXISTS audit_events_artifact_idx ON audit_events(artifact_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS audit_events_created_idx ON audit_events(created_at);
+
+CREATE TABLE IF NOT EXISTS instance_branding (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    site_name text NOT NULL,
+    tagline text NOT NULL,
+    hero_title text NOT NULL,
+    hero_highlight text NOT NULL,
+    hero_description text NOT NULL,
+    background_color text NOT NULL,
+    panel_color text NOT NULL,
+    text_color text NOT NULL,
+    muted_color text NOT NULL,
+    primary_color text NOT NULL,
+    accent_color text NOT NULL,
+    logo_mime text,
+    logo_data bytea,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CHECK ((logo_mime IS NULL) = (logo_data IS NULL))
+);
+ALTER TABLE instance_branding ADD COLUMN IF NOT EXISTS theme_name text NOT NULL DEFAULT 'Default';
+INSERT INTO instance_branding (
+    singleton,site_name,tagline,hero_title,hero_highlight,hero_description,
+    background_color,panel_color,text_color,muted_color,primary_color,accent_color
+) VALUES (
+    true,'Rendercase','Self-hosted artifacts','Make it tangible.','Keep it yours.',
+    'Interactive artifacts published by you and your tools, hosted entirely on your infrastructure.',
+    '#03060f','#0a0f1d','#e8f3ff','#8292a8','#2dd4bf','#a78bfa'
+) ON CONFLICT (singleton) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS branding_themes (
+    name text PRIMARY KEY,
+    tagline text NOT NULL, hero_title text NOT NULL, hero_highlight text NOT NULL, hero_description text NOT NULL,
+    site_name text NOT NULL, background_color text NOT NULL, panel_color text NOT NULL, text_color text NOT NULL,
+    muted_color text NOT NULL, primary_color text NOT NULL, accent_color text NOT NULL,
+    logo_mime text, logo_data bytea, updated_at timestamptz NOT NULL DEFAULT now(),
+    CHECK ((logo_mime IS NULL) = (logo_data IS NULL))
+);
+INSERT INTO branding_themes (name,site_name,tagline,hero_title,hero_highlight,hero_description,background_color,panel_color,text_color,muted_color,primary_color,accent_color,logo_mime,logo_data)
+SELECT theme_name,site_name,tagline,hero_title,hero_highlight,hero_description,background_color,panel_color,text_color,muted_color,primary_color,accent_color,logo_mime,logo_data FROM instance_branding WHERE singleton=true
+ON CONFLICT (name) DO NOTHING;

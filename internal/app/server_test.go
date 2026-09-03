@@ -50,7 +50,7 @@ func TestViewerShowsSharingControlsOnlyToOwner(t *testing.T) {
 	if err := tpl.ExecuteTemplate(&rendered, "viewer", data); err != nil {
 		t.Fatal(err)
 	}
-	for _, wanted := range []string{`stroke="#67e8f9"`, `fill="#2dd4bf"`, `id="share-open"`, `id="share-dialog"`, `data-artifact="a_example"`, `Manage sharing`, `Who can open this artifact?`, `Private — only you`, `All accounts — anyone signed in`, `value="authenticated" selected`, `PUBLIC LINKS · NO ACCOUNT REQUIRED`, `async function responseData(response)`, `Create a public link`, `Create public link for version 3`} {
+	for _, wanted := range []string{`stroke="currentColor"`, `fill="var(--accent)"`, `id="share-open"`, `id="share-dialog"`, `data-artifact="a_example"`, `Manage sharing`, `Who can open this artifact?`, `Private — only you`, `All accounts — anyone signed in`, `value="authenticated" selected`, `PUBLIC LINKS · NO ACCOUNT REQUIRED`, `async function responseData(response)`, `Create a public link`, `Create public link for version 3`} {
 		if !strings.Contains(rendered.String(), wanted) {
 			t.Errorf("owner viewer missing %q", wanted)
 		}
@@ -84,9 +84,20 @@ func TestTemplatesIncludeFavicon(t *testing.T) {
 		if err := tpl.ExecuteTemplate(&rendered, test.name, test.data); err != nil {
 			t.Fatalf("render %s: %v", test.name, err)
 		}
-		if !strings.Contains(rendered.String(), `<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">`) {
+		if !strings.Contains(rendered.String(), `<link rel="icon" href="/static/favicon.svg"`) {
 			t.Errorf("%s template does not include the favicon", test.name)
 		}
+	}
+}
+
+func TestValidateBranding(t *testing.T) {
+	valid := store.Branding{ThemeName: "Acme dark", SiteName: "Acme", BackgroundColor: "#101010", PanelColor: "#202020", TextColor: "#ffffff", MutedColor: "#aaaaaa", PrimaryColor: "#00ffaa", AccentColor: "#ff00aa"}
+	if err := validateBranding(valid); err != nil {
+		t.Fatalf("valid branding: %v", err)
+	}
+	valid.PrimaryColor = "red; background:url(https://example.invalid)"
+	if err := validateBranding(valid); err == nil {
+		t.Fatal("unsafe CSS color accepted")
 	}
 }
 

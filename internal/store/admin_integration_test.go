@@ -21,6 +21,23 @@ func TestAdminArtifactLifecycleIntegration(t *testing.T) {
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	branding, err := db.Branding(ctx)
+	if err != nil || branding.SiteName == "" {
+		t.Fatalf("default branding = %+v, %v", branding, err)
+	}
+	theme := branding
+	theme.ThemeName = "Integration theme"
+	theme.SiteName = "Integration Co"
+	if err := db.UpdateBranding(ctx, theme); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ActivateBrandingTheme(ctx, "Default"); err != nil {
+		t.Fatal(err)
+	}
+	active, err := db.ActivateBrandingTheme(ctx, theme.ThemeName)
+	if err != nil || active.SiteName != theme.SiteName {
+		t.Fatalf("activate theme = %+v, %v", active, err)
+	}
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatalf("second migration: %v", err)
 	}
@@ -41,6 +58,8 @@ func TestAdminArtifactLifecycleIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		_, _ = db.ActivateBrandingTheme(context.Background(), "Default")
+		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM branding_themes WHERE name='Integration theme'`)
 		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM artifacts WHERE id='a_test'; DELETE FROM users WHERE id IN ('u_owner','u_viewer','u_admin')`)
 	})
 

@@ -228,6 +228,11 @@ Administrators additionally have these endpoints:
 
 - `GET /api/v1/admin/artifacts` lists all active artifacts, owners, and active
   capability shares.
+- `GET` and `PUT /api/v1/admin/branding` read, save, and activate named
+  instance-wide themes containing the site name, messaging, color palette,
+  and optional logo. The `/admin` page provides the corresponding appearance
+  editor and saved-theme selector. Logos may be PNG, JPEG, or WebP and are
+  limited to 512 KiB.
 - `DELETE /api/v1/admin/shares/{share}` revokes any capability share.
 - `DELETE /api/v1/admin/artifacts/{artifact}` soft-deletes an artifact and
   revokes all of its shares. It does not erase stored object files.
@@ -251,6 +256,9 @@ Available MCP tools:
 - `rendercase_share`
 - `rendercase_revoke_share`
 - `rendercase_admin_list` (administrators only)
+- `rendercase_admin_get_branding` (administrators only)
+- `rendercase_admin_update_branding` (administrators only)
+- `rendercase_admin_activate_branding_theme` (administrators only)
 - `rendercase_admin_revoke_share` (administrators only)
 - `rendercase_admin_delete_artifact` (administrators only)
 

@@ -32,6 +32,100 @@ type User struct {
 	Admin                                     bool
 }
 
+type Branding struct {
+	ThemeName       string `json:"theme_name"`
+	SiteName        string `json:"site_name"`
+	Tagline         string `json:"tagline"`
+	HeroTitle       string `json:"hero_title"`
+	HeroHighlight   string `json:"hero_highlight"`
+	HeroDescription string `json:"hero_description"`
+	BackgroundColor string `json:"background_color"`
+	PanelColor      string `json:"panel_color"`
+	TextColor       string `json:"text_color"`
+	MutedColor      string `json:"muted_color"`
+	PrimaryColor    string `json:"primary_color"`
+	AccentColor     string `json:"accent_color"`
+	LogoMIME        string `json:"logo_mime,omitempty"`
+	LogoData        []byte `json:"-"`
+}
+
+func (b Branding) HasLogo() bool { return len(b.LogoData) > 0 }
+
+func (d *DB) Branding(ctx context.Context) (Branding, error) {
+	var b Branding
+	err := d.Pool.QueryRow(ctx, `SELECT theme_name,site_name,tagline,hero_title,hero_highlight,hero_description,
+		background_color,panel_color,text_color,muted_color,primary_color,accent_color,
+		COALESCE(logo_mime,''),COALESCE(logo_data,''::bytea) FROM instance_branding WHERE singleton=true`).Scan(
+		&b.ThemeName, &b.SiteName, &b.Tagline, &b.HeroTitle, &b.HeroHighlight, &b.HeroDescription,
+		&b.BackgroundColor, &b.PanelColor, &b.TextColor, &b.MutedColor, &b.PrimaryColor, &b.AccentColor,
+		&b.LogoMIME, &b.LogoData)
+	return b, err
+}
+
+func (d *DB) UpdateBranding(ctx context.Context, b Branding) error {
+	tx, err := d.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `INSERT INTO branding_themes(name,site_name,tagline,hero_title,hero_highlight,hero_description,background_color,panel_color,text_color,muted_color,primary_color,accent_color,logo_mime,logo_data)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(name) DO UPDATE SET site_name=EXCLUDED.site_name,tagline=EXCLUDED.tagline,hero_title=EXCLUDED.hero_title,hero_highlight=EXCLUDED.hero_highlight,hero_description=EXCLUDED.hero_description,background_color=EXCLUDED.background_color,panel_color=EXCLUDED.panel_color,text_color=EXCLUDED.text_color,muted_color=EXCLUDED.muted_color,primary_color=EXCLUDED.primary_color,accent_color=EXCLUDED.accent_color,logo_mime=EXCLUDED.logo_mime,logo_data=EXCLUDED.logo_data,updated_at=now()`, b.ThemeName, b.SiteName, b.Tagline, b.HeroTitle, b.HeroHighlight, b.HeroDescription, b.BackgroundColor, b.PanelColor, b.TextColor, b.MutedColor, b.PrimaryColor, b.AccentColor, nullString(b.LogoMIME), nullBytes(b.LogoData))
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE instance_branding SET theme_name=$1,site_name=$2,tagline=$3,hero_title=$4,
+		hero_highlight=$5,hero_description=$6,background_color=$7,panel_color=$8,text_color=$9,
+		muted_color=$10,primary_color=$11,accent_color=$12,logo_mime=$13,logo_data=$14,updated_at=now()
+		WHERE singleton=true`, b.ThemeName, b.SiteName, b.Tagline, b.HeroTitle, b.HeroHighlight, b.HeroDescription,
+		b.BackgroundColor, b.PanelColor, b.TextColor, b.MutedColor, b.PrimaryColor, b.AccentColor,
+		nullString(b.LogoMIME), nullBytes(b.LogoData))
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (d *DB) BrandingThemeNames(ctx context.Context) ([]string, error) {
+	rows, err := d.Pool.Query(ctx, `SELECT name FROM branding_themes ORDER BY lower(name),name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		names = append(names, n)
+	}
+	return names, rows.Err()
+}
+func (d *DB) ActivateBrandingTheme(ctx context.Context, name string) (Branding, error) {
+	var b Branding
+	err := d.Pool.QueryRow(ctx, `SELECT name,site_name,tagline,hero_title,hero_highlight,hero_description,background_color,panel_color,text_color,muted_color,primary_color,accent_color,COALESCE(logo_mime,''),COALESCE(logo_data,''::bytea) FROM branding_themes WHERE name=$1`, name).Scan(&b.ThemeName, &b.SiteName, &b.Tagline, &b.HeroTitle, &b.HeroHighlight, &b.HeroDescription, &b.BackgroundColor, &b.PanelColor, &b.TextColor, &b.MutedColor, &b.PrimaryColor, &b.AccentColor, &b.LogoMIME, &b.LogoData)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return b, ErrNotFound
+	}
+	if err != nil {
+		return b, err
+	}
+	return b, d.UpdateBranding(ctx, b)
+}
+
+func nullString(v string) any {
+	if v == "" {
+		return nil
+	}
+	return v
+}
+func nullBytes(v []byte) any {
+	if len(v) == 0 {
+		return nil
+	}
+	return v
+}
+
 type Principal struct {
 	User    *User
 	ShareID string

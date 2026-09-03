@@ -177,6 +177,46 @@ type adminListOutput struct {
 type adminDeleteArtifactInput struct {
 	ArtifactID string `json:"artifact_id" jsonschema:"required"`
 }
+type brandingOutput struct {
+	ThemeName       string   `json:"theme_name"`
+	SiteName        string   `json:"site_name"`
+	Tagline         string   `json:"tagline"`
+	HeroTitle       string   `json:"hero_title"`
+	HeroHighlight   string   `json:"hero_highlight"`
+	HeroDescription string   `json:"hero_description"`
+	BackgroundColor string   `json:"background_color"`
+	PanelColor      string   `json:"panel_color"`
+	TextColor       string   `json:"text_color"`
+	MutedColor      string   `json:"muted_color"`
+	PrimaryColor    string   `json:"primary_color"`
+	AccentColor     string   `json:"accent_color"`
+	HasLogo         bool     `json:"has_logo"`
+	AvailableThemes []string `json:"available_themes,omitempty"`
+}
+type brandingInput struct {
+	ThemeName       string `json:"theme_name" jsonschema:"required,saved theme name (maximum 80 characters)"`
+	SiteName        string `json:"site_name" jsonschema:"required,site name (maximum 80 characters)"`
+	Tagline         string `json:"tagline,omitempty" jsonschema:"tagline (maximum 120 characters)"`
+	HeroTitle       string `json:"hero_title,omitempty" jsonschema:"hero title (maximum 120 characters)"`
+	HeroHighlight   string `json:"hero_highlight,omitempty" jsonschema:"highlighted hero text (maximum 120 characters)"`
+	HeroDescription string `json:"hero_description,omitempty" jsonschema:"hero description (maximum 300 characters)"`
+	BackgroundColor string `json:"background_color" jsonschema:"required,six-digit hex color"`
+	PanelColor      string `json:"panel_color" jsonschema:"required,six-digit hex color"`
+	TextColor       string `json:"text_color" jsonschema:"required,six-digit hex color"`
+	MutedColor      string `json:"muted_color" jsonschema:"required,six-digit hex color"`
+	PrimaryColor    string `json:"primary_color" jsonschema:"required,six-digit hex color"`
+	AccentColor     string `json:"accent_color" jsonschema:"required,six-digit hex color"`
+	LogoMIME        string `json:"logo_mime,omitempty" jsonschema:"image/png, image/jpeg, or image/webp"`
+	LogoBase64      string `json:"logo_base64,omitempty" jsonschema:"base64 logo, maximum 512 KiB"`
+	RemoveLogo      bool   `json:"remove_logo,omitempty"`
+}
+type activateBrandingInput struct {
+	ThemeName string `json:"theme_name" jsonschema:"required,saved theme name"`
+}
+
+func brandingForMCP(b store.Branding) brandingOutput {
+	return brandingOutput{ThemeName: b.ThemeName, SiteName: b.SiteName, Tagline: b.Tagline, HeroTitle: b.HeroTitle, HeroHighlight: b.HeroHighlight, HeroDescription: b.HeroDescription, BackgroundColor: b.BackgroundColor, PanelColor: b.PanelColor, TextColor: b.TextColor, MutedColor: b.MutedColor, PrimaryColor: b.PrimaryColor, AccentColor: b.AccentColor, HasLogo: b.HasLogo()}
+}
 
 func (s *Server) newMCPServer(user store.User) *mcp.Server {
 	server := mcpkit.MustServer(mcpkit.ServerConfig{Name: "rendercase", Version: "0.1.0", Logger: s.log})
@@ -302,6 +342,58 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		return textResult("Capability share revoked."), revokeShareOutput{ArtifactID: artifactID}, nil
 	})
 	if user.Admin {
+		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_get_branding", Description: "Get the instance-wide name, messaging, color theme, and logo status. Administrator access required; binary logo data is omitted.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, brandingOutput, error) {
+			b, err := s.db.Branding(ctx)
+			if err != nil {
+				return nil, brandingOutput{}, err
+			}
+			themes, err := s.db.BrandingThemeNames(ctx)
+			if err != nil {
+				return nil, brandingOutput{}, err
+			}
+			out := brandingForMCP(b)
+			out.AvailableThemes = themes
+			return textResult("Current instance branding loaded."), out, nil
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_update_branding", Description: "Replace the instance-wide name, messaging, color theme, and optionally its logo. Use rendercase_admin_get_branding first when preserving current values. Administrator access required; the action is audited.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in brandingInput) (*mcp.CallToolResult, brandingOutput, error) {
+			current, err := s.db.Branding(ctx)
+			if err != nil {
+				return nil, brandingOutput{}, err
+			}
+			b := store.Branding{ThemeName: strings.TrimSpace(in.ThemeName), SiteName: strings.TrimSpace(in.SiteName), Tagline: strings.TrimSpace(in.Tagline), HeroTitle: strings.TrimSpace(in.HeroTitle), HeroHighlight: strings.TrimSpace(in.HeroHighlight), HeroDescription: strings.TrimSpace(in.HeroDescription), BackgroundColor: in.BackgroundColor, PanelColor: in.PanelColor, TextColor: in.TextColor, MutedColor: in.MutedColor, PrimaryColor: in.PrimaryColor, AccentColor: in.AccentColor, LogoMIME: current.LogoMIME, LogoData: current.LogoData}
+			if err := validateBranding(b); err != nil {
+				return nil, brandingOutput{}, err
+			}
+			if in.RemoveLogo {
+				b.LogoMIME, b.LogoData = "", nil
+			}
+			if in.LogoBase64 != "" {
+				if in.LogoMIME != "image/png" && in.LogoMIME != "image/jpeg" && in.LogoMIME != "image/webp" {
+					return nil, brandingOutput{}, errors.New("logo_mime must be image/png, image/jpeg, or image/webp")
+				}
+				data, err := base64.StdEncoding.DecodeString(in.LogoBase64)
+				if err != nil || len(data) == 0 || len(data) > 512<<10 || http.DetectContentType(data) != in.LogoMIME {
+					return nil, brandingOutput{}, errors.New("logo is invalid or larger than 512 KiB")
+				}
+				b.LogoMIME, b.LogoData = in.LogoMIME, data
+			}
+			if err := s.db.UpdateBranding(ctx, b); err != nil {
+				return nil, brandingOutput{}, err
+			}
+			s.auditContext(ctx, user.ID, "", "", "admin.branding.update", map[string]any{"site_name": b.SiteName, "logo": b.HasLogo(), "interface": "mcp"})
+			return textResult("Instance branding updated."), brandingForMCP(b), nil
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_activate_branding_theme", Description: "Activate a saved instance branding theme by name. Administrator access required; the action is audited.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in activateBrandingInput) (*mcp.CallToolResult, brandingOutput, error) {
+			b, err := s.db.ActivateBrandingTheme(ctx, strings.TrimSpace(in.ThemeName))
+			if err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					return nil, brandingOutput{}, errors.New("branding theme not found")
+				}
+				return nil, brandingOutput{}, err
+			}
+			s.auditContext(ctx, user.ID, "", "", "admin.branding.activate", map[string]any{"theme_name": b.ThemeName, "interface": "mcp"})
+			return textResult("Branding theme activated."), brandingForMCP(b), nil
+		})
 		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_list", Description: "List every active artifact, its owner, and active capability shares. Administrator access required.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, adminListOutput, error) {
 			artifacts, err := s.db.ListAdminArtifacts(ctx)
 			if err != nil {
