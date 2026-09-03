@@ -179,6 +179,20 @@ func TestPrimaryButtonUsesBrandingTokens(t *testing.T) {
 	}
 }
 
+func TestAdminTemplateOffersSeparateFavicon(t *testing.T) {
+	tpl := template.Must(template.New("root").ParseFS(webFS, "web/*.html"))
+	var rendered bytes.Buffer
+	err := tpl.ExecuteTemplate(&rendered, "admin", map[string]any{"Branding": store.Branding{ThemeName: "Default", SiteName: "Rendercase", FaviconMIME: "image/png", FaviconData: []byte("favicon")}, "Themes": []string{"Default"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, wanted := range []string{`id="brand-favicon-input"`, `id="remove-favicon"`, `favicon_data_url`, `remove_favicon`} {
+		if !strings.Contains(rendered.String(), wanted) {
+			t.Errorf("admin template missing %q", wanted)
+		}
+	}
+}
+
 func TestUploadTokenIgnoresQueryString(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPut, "https://rendercase.example/upload?token=logged-secret", nil)
 	if got := uploadToken(request); got != "" {

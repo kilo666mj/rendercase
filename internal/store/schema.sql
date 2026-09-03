@@ -150,10 +150,15 @@ CREATE TABLE IF NOT EXISTS instance_branding (
     accent_color text NOT NULL,
     logo_mime text,
     logo_data bytea,
+    favicon_mime text,
+    favicon_data bytea,
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CHECK ((logo_mime IS NULL) = (logo_data IS NULL))
+    CHECK ((logo_mime IS NULL) = (logo_data IS NULL)),
+    CHECK ((favicon_mime IS NULL) = (favicon_data IS NULL))
 );
 ALTER TABLE instance_branding ADD COLUMN IF NOT EXISTS theme_name text NOT NULL DEFAULT 'Default';
+ALTER TABLE instance_branding ADD COLUMN IF NOT EXISTS favicon_mime text;
+ALTER TABLE instance_branding ADD COLUMN IF NOT EXISTS favicon_data bytea;
 INSERT INTO instance_branding (
     singleton,site_name,tagline,hero_title,hero_highlight,hero_description,
     background_color,panel_color,text_color,muted_color,primary_color,accent_color
@@ -168,9 +173,13 @@ CREATE TABLE IF NOT EXISTS branding_themes (
     tagline text NOT NULL, hero_title text NOT NULL, hero_highlight text NOT NULL, hero_description text NOT NULL,
     site_name text NOT NULL, background_color text NOT NULL, panel_color text NOT NULL, text_color text NOT NULL,
     muted_color text NOT NULL, primary_color text NOT NULL, accent_color text NOT NULL,
-    logo_mime text, logo_data bytea, updated_at timestamptz NOT NULL DEFAULT now(),
-    CHECK ((logo_mime IS NULL) = (logo_data IS NULL))
+    logo_mime text, logo_data bytea, favicon_mime text, favicon_data bytea,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CHECK ((logo_mime IS NULL) = (logo_data IS NULL)),
+    CHECK ((favicon_mime IS NULL) = (favicon_data IS NULL))
 );
-INSERT INTO branding_themes (name,site_name,tagline,hero_title,hero_highlight,hero_description,background_color,panel_color,text_color,muted_color,primary_color,accent_color,logo_mime,logo_data)
-SELECT theme_name,site_name,tagline,hero_title,hero_highlight,hero_description,background_color,panel_color,text_color,muted_color,primary_color,accent_color,logo_mime,logo_data FROM instance_branding WHERE singleton=true
+ALTER TABLE branding_themes ADD COLUMN IF NOT EXISTS favicon_mime text;
+ALTER TABLE branding_themes ADD COLUMN IF NOT EXISTS favicon_data bytea;
+INSERT INTO branding_themes (name,site_name,tagline,hero_title,hero_highlight,hero_description,background_color,panel_color,text_color,muted_color,primary_color,accent_color,logo_mime,logo_data,favicon_mime,favicon_data)
+SELECT theme_name,site_name,tagline,hero_title,hero_highlight,hero_description,background_color,panel_color,text_color,muted_color,primary_color,accent_color,logo_mime,logo_data,favicon_mime,favicon_data FROM instance_branding WHERE singleton=true
 ON CONFLICT (name) DO NOTHING;

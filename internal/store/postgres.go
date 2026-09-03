@@ -51,18 +51,21 @@ type Branding struct {
 	AccentColor     string `json:"accent_color"`
 	LogoMIME        string `json:"logo_mime,omitempty"`
 	LogoData        []byte `json:"-"`
+	FaviconMIME     string `json:"favicon_mime,omitempty"`
+	FaviconData     []byte `json:"-"`
 }
 
-func (b Branding) HasLogo() bool { return len(b.LogoData) > 0 }
+func (b Branding) HasLogo() bool    { return len(b.LogoData) > 0 }
+func (b Branding) HasFavicon() bool { return len(b.FaviconData) > 0 }
 
 func (d *DB) Branding(ctx context.Context) (Branding, error) {
 	var b Branding
 	err := d.Pool.QueryRow(ctx, `SELECT theme_name,site_name,tagline,hero_title,hero_highlight,hero_description,
 		background_color,panel_color,text_color,muted_color,primary_color,accent_color,
-		COALESCE(logo_mime,''),COALESCE(logo_data,''::bytea) FROM instance_branding WHERE singleton=true`).Scan(
+		COALESCE(logo_mime,''),COALESCE(logo_data,''::bytea),COALESCE(favicon_mime,''),COALESCE(favicon_data,''::bytea) FROM instance_branding WHERE singleton=true`).Scan(
 		&b.ThemeName, &b.SiteName, &b.Tagline, &b.HeroTitle, &b.HeroHighlight, &b.HeroDescription,
 		&b.BackgroundColor, &b.PanelColor, &b.TextColor, &b.MutedColor, &b.PrimaryColor, &b.AccentColor,
-		&b.LogoMIME, &b.LogoData)
+		&b.LogoMIME, &b.LogoData, &b.FaviconMIME, &b.FaviconData)
 	return b, err
 }
 
@@ -91,17 +94,17 @@ func (d *DB) UpdateBranding(ctx context.Context, b Branding) error {
 			return ErrThemeLimit
 		}
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO branding_themes(name,site_name,tagline,hero_title,hero_highlight,hero_description,background_color,panel_color,text_color,muted_color,primary_color,accent_color,logo_mime,logo_data)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(name) DO UPDATE SET site_name=EXCLUDED.site_name,tagline=EXCLUDED.tagline,hero_title=EXCLUDED.hero_title,hero_highlight=EXCLUDED.hero_highlight,hero_description=EXCLUDED.hero_description,background_color=EXCLUDED.background_color,panel_color=EXCLUDED.panel_color,text_color=EXCLUDED.text_color,muted_color=EXCLUDED.muted_color,primary_color=EXCLUDED.primary_color,accent_color=EXCLUDED.accent_color,logo_mime=EXCLUDED.logo_mime,logo_data=EXCLUDED.logo_data,updated_at=now()`, b.ThemeName, b.SiteName, b.Tagline, b.HeroTitle, b.HeroHighlight, b.HeroDescription, b.BackgroundColor, b.PanelColor, b.TextColor, b.MutedColor, b.PrimaryColor, b.AccentColor, nullString(b.LogoMIME), nullBytes(b.LogoData))
+	_, err = tx.Exec(ctx, `INSERT INTO branding_themes(name,site_name,tagline,hero_title,hero_highlight,hero_description,background_color,panel_color,text_color,muted_color,primary_color,accent_color,logo_mime,logo_data,favicon_mime,favicon_data)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT(name) DO UPDATE SET site_name=EXCLUDED.site_name,tagline=EXCLUDED.tagline,hero_title=EXCLUDED.hero_title,hero_highlight=EXCLUDED.hero_highlight,hero_description=EXCLUDED.hero_description,background_color=EXCLUDED.background_color,panel_color=EXCLUDED.panel_color,text_color=EXCLUDED.text_color,muted_color=EXCLUDED.muted_color,primary_color=EXCLUDED.primary_color,accent_color=EXCLUDED.accent_color,logo_mime=EXCLUDED.logo_mime,logo_data=EXCLUDED.logo_data,favicon_mime=EXCLUDED.favicon_mime,favicon_data=EXCLUDED.favicon_data,updated_at=now()`, b.ThemeName, b.SiteName, b.Tagline, b.HeroTitle, b.HeroHighlight, b.HeroDescription, b.BackgroundColor, b.PanelColor, b.TextColor, b.MutedColor, b.PrimaryColor, b.AccentColor, nullString(b.LogoMIME), nullBytes(b.LogoData), nullString(b.FaviconMIME), nullBytes(b.FaviconData))
 	if err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE instance_branding SET theme_name=$1,site_name=$2,tagline=$3,hero_title=$4,
 		hero_highlight=$5,hero_description=$6,background_color=$7,panel_color=$8,text_color=$9,
-		muted_color=$10,primary_color=$11,accent_color=$12,logo_mime=$13,logo_data=$14,updated_at=now()
+		muted_color=$10,primary_color=$11,accent_color=$12,logo_mime=$13,logo_data=$14,favicon_mime=$15,favicon_data=$16,updated_at=now()
 		WHERE singleton=true`, b.ThemeName, b.SiteName, b.Tagline, b.HeroTitle, b.HeroHighlight, b.HeroDescription,
 		b.BackgroundColor, b.PanelColor, b.TextColor, b.MutedColor, b.PrimaryColor, b.AccentColor,
-		nullString(b.LogoMIME), nullBytes(b.LogoData))
+		nullString(b.LogoMIME), nullBytes(b.LogoData), nullString(b.FaviconMIME), nullBytes(b.FaviconData))
 	if err != nil {
 		return err
 	}
@@ -126,7 +129,7 @@ func (d *DB) BrandingThemeNames(ctx context.Context) ([]string, error) {
 }
 func (d *DB) ActivateBrandingTheme(ctx context.Context, name string) (Branding, error) {
 	var b Branding
-	err := d.Pool.QueryRow(ctx, `SELECT name,site_name,tagline,hero_title,hero_highlight,hero_description,background_color,panel_color,text_color,muted_color,primary_color,accent_color,COALESCE(logo_mime,''),COALESCE(logo_data,''::bytea) FROM branding_themes WHERE name=$1`, name).Scan(&b.ThemeName, &b.SiteName, &b.Tagline, &b.HeroTitle, &b.HeroHighlight, &b.HeroDescription, &b.BackgroundColor, &b.PanelColor, &b.TextColor, &b.MutedColor, &b.PrimaryColor, &b.AccentColor, &b.LogoMIME, &b.LogoData)
+	err := d.Pool.QueryRow(ctx, `SELECT name,site_name,tagline,hero_title,hero_highlight,hero_description,background_color,panel_color,text_color,muted_color,primary_color,accent_color,COALESCE(logo_mime,''),COALESCE(logo_data,''::bytea),COALESCE(favicon_mime,''),COALESCE(favicon_data,''::bytea) FROM branding_themes WHERE name=$1`, name).Scan(&b.ThemeName, &b.SiteName, &b.Tagline, &b.HeroTitle, &b.HeroHighlight, &b.HeroDescription, &b.BackgroundColor, &b.PanelColor, &b.TextColor, &b.MutedColor, &b.PrimaryColor, &b.AccentColor, &b.LogoMIME, &b.LogoData, &b.FaviconMIME, &b.FaviconData)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return b, ErrNotFound
 	}

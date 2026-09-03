@@ -192,6 +192,8 @@ type brandingOutput struct {
 	AccentColor     string   `json:"accent_color"`
 	HasLogo         bool     `json:"has_logo"`
 	LogoURL         string   `json:"logo_url,omitempty"`
+	HasFavicon      bool     `json:"has_favicon"`
+	FaviconURL      string   `json:"favicon_url"`
 	AvailableThemes []string `json:"available_themes,omitempty"`
 }
 type brandingInput struct {
@@ -210,13 +212,16 @@ type brandingInput struct {
 	LogoMIME        string `json:"logo_mime,omitempty" jsonschema:"image/png, image/jpeg, or image/webp"`
 	LogoBase64      string `json:"logo_base64,omitempty" jsonschema:"base64 logo, maximum 512 KiB"`
 	RemoveLogo      bool   `json:"remove_logo,omitempty"`
+	FaviconMIME     string `json:"favicon_mime,omitempty" jsonschema:"image/png, image/jpeg, or image/webp"`
+	FaviconBase64   string `json:"favicon_base64,omitempty" jsonschema:"base64 favicon, maximum 512 KiB"`
+	RemoveFavicon   bool   `json:"remove_favicon,omitempty"`
 }
 type activateBrandingInput struct {
 	ThemeName string `json:"theme_name" jsonschema:"required,saved theme name"`
 }
 
 func brandingForMCP(b store.Branding) brandingOutput {
-	return brandingOutput{ThemeName: b.ThemeName, SiteName: b.SiteName, Tagline: b.Tagline, HeroTitle: b.HeroTitle, HeroHighlight: b.HeroHighlight, HeroDescription: b.HeroDescription, BackgroundColor: b.BackgroundColor, PanelColor: b.PanelColor, TextColor: b.TextColor, MutedColor: b.MutedColor, PrimaryColor: b.PrimaryColor, AccentColor: b.AccentColor, HasLogo: b.HasLogo()}
+	return brandingOutput{ThemeName: b.ThemeName, SiteName: b.SiteName, Tagline: b.Tagline, HeroTitle: b.HeroTitle, HeroHighlight: b.HeroHighlight, HeroDescription: b.HeroDescription, BackgroundColor: b.BackgroundColor, PanelColor: b.PanelColor, TextColor: b.TextColor, MutedColor: b.MutedColor, PrimaryColor: b.PrimaryColor, AccentColor: b.AccentColor, HasLogo: b.HasLogo(), HasFavicon: b.HasFavicon()}
 }
 
 func (s *Server) newMCPServer(user store.User) *mcp.Server {
@@ -230,6 +235,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		if out.HasLogo {
 			out.LogoURL = strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/static/brand-logo"
 		}
+		out.FaviconURL = strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/static/favicon.svg"
 		return textResult("Active Rendercase design system loaded. Use it unless the user or represented project supplies another design system."), out, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_list", Description: "List artifacts the authenticated user owns or can access.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, listOutput, error) {
@@ -354,7 +360,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		return textResult("Capability share revoked."), revokeShareOutput{ArtifactID: artifactID}, nil
 	})
 	if user.Admin {
-		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_get_branding", Description: "Get the instance-wide name, messaging, color theme, and logo status. Administrator access required; binary logo data is omitted.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, brandingOutput, error) {
+		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_get_branding", Description: "Get the instance-wide name, messaging, color theme, logo, and favicon status. Administrator access required; binary image data is omitted.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, brandingOutput, error) {
 			b, err := s.branding(ctx)
 			if err != nil {
 				return nil, brandingOutput{}, err
@@ -367,12 +373,12 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 			out.AvailableThemes = themes
 			return textResult("Current instance branding loaded."), out, nil
 		})
-		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_update_branding", Description: "Replace the instance-wide name, messaging, color theme, and optionally its logo. Use rendercase_admin_get_branding first when preserving current values. Administrator access required; the action is audited.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in brandingInput) (*mcp.CallToolResult, brandingOutput, error) {
+		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_update_branding", Description: "Replace the instance-wide name, messaging, color theme, and optional logo and favicon. Use rendercase_admin_get_branding first when preserving current values. Administrator access required; the action is audited.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in brandingInput) (*mcp.CallToolResult, brandingOutput, error) {
 			current, err := s.branding(ctx)
 			if err != nil {
 				return nil, brandingOutput{}, err
 			}
-			b := store.Branding{ThemeName: strings.TrimSpace(in.ThemeName), SiteName: strings.TrimSpace(in.SiteName), Tagline: strings.TrimSpace(in.Tagline), HeroTitle: strings.TrimSpace(in.HeroTitle), HeroHighlight: strings.TrimSpace(in.HeroHighlight), HeroDescription: strings.TrimSpace(in.HeroDescription), BackgroundColor: in.BackgroundColor, PanelColor: in.PanelColor, TextColor: in.TextColor, MutedColor: in.MutedColor, PrimaryColor: in.PrimaryColor, AccentColor: in.AccentColor, LogoMIME: current.LogoMIME, LogoData: current.LogoData}
+			b := store.Branding{ThemeName: strings.TrimSpace(in.ThemeName), SiteName: strings.TrimSpace(in.SiteName), Tagline: strings.TrimSpace(in.Tagline), HeroTitle: strings.TrimSpace(in.HeroTitle), HeroHighlight: strings.TrimSpace(in.HeroHighlight), HeroDescription: strings.TrimSpace(in.HeroDescription), BackgroundColor: in.BackgroundColor, PanelColor: in.PanelColor, TextColor: in.TextColor, MutedColor: in.MutedColor, PrimaryColor: in.PrimaryColor, AccentColor: in.AccentColor, LogoMIME: current.LogoMIME, LogoData: current.LogoData, FaviconMIME: current.FaviconMIME, FaviconData: current.FaviconData}
 			if err := validateBranding(b); err != nil {
 				return nil, brandingOutput{}, err
 			}
@@ -389,11 +395,24 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 				}
 				b.LogoMIME, b.LogoData = in.LogoMIME, data
 			}
+			if in.RemoveFavicon {
+				b.FaviconMIME, b.FaviconData = "", nil
+			}
+			if in.FaviconBase64 != "" {
+				if in.FaviconMIME != "image/png" && in.FaviconMIME != "image/jpeg" && in.FaviconMIME != "image/webp" {
+					return nil, brandingOutput{}, errors.New("favicon_mime must be image/png, image/jpeg, or image/webp")
+				}
+				data, err := base64.StdEncoding.DecodeString(in.FaviconBase64)
+				if err != nil || len(data) == 0 || len(data) > 512<<10 || http.DetectContentType(data) != in.FaviconMIME {
+					return nil, brandingOutput{}, errors.New("favicon is invalid or larger than 512 KiB")
+				}
+				b.FaviconMIME, b.FaviconData = in.FaviconMIME, data
+			}
 			if err := s.db.UpdateBranding(ctx, b); err != nil {
 				return nil, brandingOutput{}, err
 			}
 			s.invalidateBranding()
-			s.auditContext(ctx, user.ID, "", "", "admin.branding.update", map[string]any{"site_name": b.SiteName, "logo": b.HasLogo(), "interface": "mcp"})
+			s.auditContext(ctx, user.ID, "", "", "admin.branding.update", map[string]any{"site_name": b.SiteName, "logo": b.HasLogo(), "favicon": b.HasFavicon(), "interface": "mcp"})
 			return textResult("Instance branding updated."), brandingForMCP(b), nil
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_activate_branding_theme", Description: "Activate a saved instance branding theme by name. Administrator access required; the action is audited.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in activateBrandingInput) (*mcp.CallToolResult, brandingOutput, error) {

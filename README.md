@@ -230,9 +230,10 @@ Administrators additionally have these endpoints:
   capability shares.
 - `GET` and `PUT /api/v1/admin/branding` read, save, and activate named
   instance-wide themes containing the site name, messaging, color palette,
-  and optional logo. The `/admin` page provides the corresponding appearance
-  editor and saved-theme selector. Logos may be PNG, JPEG, or WebP and are
-  limited to 512 KiB, and an instance may retain up to 50 themes.
+  optional logo, and optional separate favicon. The `/admin` page provides the
+  corresponding appearance editor and saved-theme selector. Brand images may
+  be PNG, JPEG, or WebP and are limited to 512 KiB each; an instance may retain
+  up to 50 themes. Without a separate favicon, the logo remains the fallback.
 - `DELETE /api/v1/admin/branding/themes/{theme}` deletes an inactive saved
   theme. The active theme cannot be deleted.
 - `DELETE /api/v1/admin/shares/{share}` revokes any capability share.

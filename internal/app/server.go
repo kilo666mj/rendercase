@@ -230,10 +230,14 @@ func (s *Server) style(w http.ResponseWriter, r *http.Request) {
 func (s *Server) favicon(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if s.db != nil {
-		if branding, err := s.branding(r.Context()); err == nil && branding.HasLogo() {
-			w.Header().Set("Content-Type", branding.LogoMIME)
+		if branding, err := s.branding(r.Context()); err == nil && (branding.HasFavicon() || branding.HasLogo()) {
+			mimeType, data := branding.LogoMIME, branding.LogoData
+			if branding.HasFavicon() {
+				mimeType, data = branding.FaviconMIME, branding.FaviconData
+			}
+			w.Header().Set("Content-Type", mimeType)
 			w.Header().Set("Cache-Control", "no-cache")
-			_, _ = w.Write(branding.LogoData)
+			_, _ = w.Write(data)
 			return
 		}
 	}
@@ -580,6 +584,7 @@ func (s *Server) adminBranding(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet {
 		current.LogoData = nil
+		current.FaviconData = nil
 		writeJSON(w, http.StatusOK, current)
 		return
 	}
@@ -599,6 +604,8 @@ func (s *Server) adminBranding(w http.ResponseWriter, r *http.Request) {
 		AccentColor     string  `json:"accent_color"`
 		LogoDataURL     *string `json:"logo_data_url"`
 		RemoveLogo      bool    `json:"remove_logo"`
+		FaviconDataURL  *string `json:"favicon_data_url"`
+		RemoveFavicon   bool    `json:"remove_favicon"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
@@ -618,7 +625,7 @@ func (s *Server) adminBranding(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	b := store.Branding{ThemeName: strings.TrimSpace(in.ThemeName), SiteName: strings.TrimSpace(in.SiteName), Tagline: strings.TrimSpace(in.Tagline), HeroTitle: strings.TrimSpace(in.HeroTitle), HeroHighlight: strings.TrimSpace(in.HeroHighlight), HeroDescription: strings.TrimSpace(in.HeroDescription), BackgroundColor: in.BackgroundColor, PanelColor: in.PanelColor, TextColor: in.TextColor, MutedColor: in.MutedColor, PrimaryColor: in.PrimaryColor, AccentColor: in.AccentColor, LogoMIME: current.LogoMIME, LogoData: current.LogoData}
+	b := store.Branding{ThemeName: strings.TrimSpace(in.ThemeName), SiteName: strings.TrimSpace(in.SiteName), Tagline: strings.TrimSpace(in.Tagline), HeroTitle: strings.TrimSpace(in.HeroTitle), HeroHighlight: strings.TrimSpace(in.HeroHighlight), HeroDescription: strings.TrimSpace(in.HeroDescription), BackgroundColor: in.BackgroundColor, PanelColor: in.PanelColor, TextColor: in.TextColor, MutedColor: in.MutedColor, PrimaryColor: in.PrimaryColor, AccentColor: in.AccentColor, LogoMIME: current.LogoMIME, LogoData: current.LogoData, FaviconMIME: current.FaviconMIME, FaviconData: current.FaviconData}
 	if err := validateBranding(b); err != nil {
 		writeError(w, 400, err.Error())
 		return
@@ -644,6 +651,27 @@ func (s *Server) adminBranding(w http.ResponseWriter, r *http.Request) {
 		}
 		b.LogoMIME, b.LogoData = mimeType, data
 	}
+	if in.RemoveFavicon {
+		b.FaviconMIME, b.FaviconData = "", nil
+	}
+	if in.FaviconDataURL != nil && *in.FaviconDataURL != "" {
+		parts := strings.SplitN(*in.FaviconDataURL, ",", 2)
+		if len(parts) != 2 {
+			writeError(w, 400, "invalid favicon")
+			return
+		}
+		mimeType := strings.TrimSuffix(strings.TrimPrefix(parts[0], "data:"), ";base64")
+		if parts[0] != "data:"+mimeType+";base64" || (mimeType != "image/png" && mimeType != "image/jpeg" && mimeType != "image/webp") {
+			writeError(w, 400, "favicon must be PNG, JPEG, or WebP")
+			return
+		}
+		data, decodeErr := base64.StdEncoding.DecodeString(parts[1])
+		if decodeErr != nil || len(data) == 0 || len(data) > 512<<10 || http.DetectContentType(data) != mimeType {
+			writeError(w, 400, "favicon is invalid or larger than 512 KiB")
+			return
+		}
+		b.FaviconMIME, b.FaviconData = mimeType, data
+	}
 	if err := s.db.UpdateBranding(r.Context(), b); err != nil {
 		if errors.Is(err, store.ErrThemeLimit) {
 			writeError(w, http.StatusConflict, err.Error())
@@ -653,7 +681,7 @@ func (s *Server) adminBranding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.invalidateBranding()
-	s.audit(r, currentUser(r).ID, "", "", "admin.branding.update", map[string]any{"site_name": b.SiteName, "logo": b.HasLogo()})
+	s.audit(r, currentUser(r).ID, "", "", "admin.branding.update", map[string]any{"site_name": b.SiteName, "logo": b.HasLogo(), "favicon": b.HasFavicon()})
 	w.WriteHeader(http.StatusNoContent)
 }
 
