@@ -34,7 +34,11 @@ them into one unlabeled diagram.
 ## Design-system selection
 
 Inspect the represented project's existing CSS, templates, theme tokens, or
-brand assets first. Reuse only assets safe to include. When there is no design
-system, use system fonts, a small CSS variable palette, strong hierarchy, and
-minimal animation. Remote libraries are acceptable when needed, but local or
-inline assets make the artifact more durable.
+brand assets first. Reuse only assets safe to include. When the user or project
+does not provide a design system, call `rendercase_get_branding` and map its
+active colors to CSS custom properties. Its `logo_url`, when present, may be
+downloaded into the bundle and used as the Rendercase identity; do not hotlink
+it or imply that it belongs to the represented project. User and project styling
+takes precedence. Use system fonts, strong hierarchy, and minimal animation.
+Remote libraries are acceptable when needed, but local or inline assets make
+the artifact more durable.

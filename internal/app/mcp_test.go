@@ -57,7 +57,7 @@ func TestAdminMCPToolsAreVisibleOnlyToAdministrators(t *testing.T) {
 			}
 			want := []string{
 				"rendercase_commit_upload", "rendercase_create_upload", "rendercase_get",
-				"rendercase_list", "rendercase_publish", "rendercase_revoke_share", "rendercase_set_visibility", "rendercase_share",
+				"rendercase_get_branding", "rendercase_list", "rendercase_publish", "rendercase_revoke_share", "rendercase_set_visibility", "rendercase_share",
 			}
 			if test.admin {
 				want = append(want, "rendercase_admin_activate_branding_theme", "rendercase_admin_delete_artifact", "rendercase_admin_delete_branding_theme", "rendercase_admin_get_branding", "rendercase_admin_list", "rendercase_admin_revoke_share", "rendercase_admin_update_branding")
@@ -67,6 +67,9 @@ func TestAdminMCPToolsAreVisibleOnlyToAdministrators(t *testing.T) {
 			seenAdmin := false
 			for _, tool := range result.Tools {
 				got = append(got, tool.Name)
+				if slices.Contains([]string{"rendercase_create_upload", "rendercase_publish"}, tool.Name) && !strings.Contains(tool.Description, "rendercase_get_branding") {
+					t.Errorf("tool %q does not direct authors to branding", tool.Name)
+				}
 				if strings.HasPrefix(tool.Name, "rendercase_admin_") {
 					seenAdmin = true
 				}
@@ -74,7 +77,7 @@ func TestAdminMCPToolsAreVisibleOnlyToAdministrators(t *testing.T) {
 					t.Errorf("tool %q has no safety annotations", tool.Name)
 					continue
 				}
-				readOnly := slices.Contains([]string{"rendercase_admin_get_branding", "rendercase_admin_list", "rendercase_get", "rendercase_list"}, tool.Name)
+				readOnly := slices.Contains([]string{"rendercase_admin_get_branding", "rendercase_admin_list", "rendercase_get", "rendercase_get_branding", "rendercase_list"}, tool.Name)
 				destructive := slices.Contains([]string{"rendercase_admin_delete_artifact", "rendercase_admin_delete_branding_theme", "rendercase_admin_revoke_share", "rendercase_revoke_share"}, tool.Name)
 				if tool.Annotations.ReadOnlyHint != readOnly || *tool.Annotations.DestructiveHint != destructive || *tool.Annotations.OpenWorldHint {
 					t.Errorf("tool %q annotations = %+v", tool.Name, tool.Annotations)

@@ -16,8 +16,10 @@ user explicitly asks.
    existing artifact. Use `rendercase_list` or `rendercase_get` when the user
    refers to an existing artifact but has not supplied its ID.
 2. Inspect the design system of the project the artifact represents. Reuse its
-   colors, typography, spacing, and brand assets when available. Otherwise use
-   a restrained, accessible standalone design.
+   colors, typography, spacing, and brand assets when available. If the user or
+   project does not supply a design system, call `rendercase_get_branding` and
+   follow the active Rendercase palette and identity. User and project styling
+   always take precedence over the Rendercase theme.
 3. Read [references/authoring.md](references/authoring.md) when the artifact
    contains diagrams, comparisons, tables, plans, or other visual structure.
 4. Build under a temporary directory, normally with `index.html` as the

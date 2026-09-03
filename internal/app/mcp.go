@@ -191,6 +191,7 @@ type brandingOutput struct {
 	PrimaryColor    string   `json:"primary_color"`
 	AccentColor     string   `json:"accent_color"`
 	HasLogo         bool     `json:"has_logo"`
+	LogoURL         string   `json:"logo_url,omitempty"`
 	AvailableThemes []string `json:"available_themes,omitempty"`
 }
 type brandingInput struct {
@@ -220,6 +221,17 @@ func brandingForMCP(b store.Branding) brandingOutput {
 
 func (s *Server) newMCPServer(user store.User) *mcp.Server {
 	server := mcpkit.MustServer(mcpkit.ServerConfig{Name: "rendercase", Version: "0.1.0", Logger: s.log})
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_get_branding", Description: "Get the active Rendercase design system for artifact authoring: site identity, messaging, color palette, and optional logo URL. Follow it when the user or represented project does not provide another design system.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, brandingOutput, error) {
+		b, err := s.branding(ctx)
+		if err != nil {
+			return nil, brandingOutput{}, err
+		}
+		out := brandingForMCP(b)
+		if out.HasLogo {
+			out.LogoURL = strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/static/brand-logo"
+		}
+		return textResult("Active Rendercase design system loaded. Use it unless the user or represented project supplies another design system."), out, nil
+	})
 	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_list", Description: "List artifacts the authenticated user owns or can access.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, listOutput, error) {
 		artifacts, err := s.db.ListArtifacts(ctx, user.ID)
 		if err != nil {
@@ -247,7 +259,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		out := getOutput{Artifact: a, Version: mcpV, URL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/a/" + a.ID}
 		return textResult("Found " + a.Title + " version " + strconv.Itoa(v.Version) + "."), out, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_create_upload", Description: "Create a short-lived upload URL for a ZIP bundle. To update an existing artifact, set artifact_id to an artifact owned by the caller; committing creates its next immutable version. PUT the ZIP using X-Rendercase-Upload-Token, then call rendercase_commit_upload.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in createUploadInput) (*mcp.CallToolResult, createUploadOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_create_upload", Description: "Create a short-lived upload URL for a ZIP bundle. Before authoring, call rendercase_get_branding and follow it unless the user or represented project supplies another design system. To update an existing artifact, set artifact_id to an artifact owned by the caller; committing creates its next immutable version. PUT the ZIP using X-Rendercase-Upload-Token, then call rendercase_commit_upload.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in createUploadInput) (*mcp.CallToolResult, createUploadOutput, error) {
 		var err error
 		in.Title, err = normalizeTitle(in.Title)
 		if err != nil {
@@ -291,7 +303,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		out := commitOutput{Artifact: a, Version: mcpV, URL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/a/" + a.ID}
 		return textResult("Published " + a.Title + " version " + strconv.Itoa(v.Version) + ": " + out.URL), out, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_publish", Description: "Create or update an artifact in one MCP call from a base64-encoded ZIP bundle. Set artifact_id to an artifact owned by the caller to create its next immutable version.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in publishInput) (*mcp.CallToolResult, commitOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_publish", Description: "Create or update an artifact in one MCP call from a base64-encoded ZIP bundle. Before authoring, call rendercase_get_branding and follow it unless the user or represented project supplies another design system. Set artifact_id to an artifact owned by the caller to create its next immutable version.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in publishInput) (*mcp.CallToolResult, commitOutput, error) {
 		out, err := s.publishBundleForUser(ctx, user, in)
 		if err != nil {
 			return nil, commitOutput{}, err

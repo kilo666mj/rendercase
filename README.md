@@ -251,6 +251,7 @@ Available MCP tools:
 
 - `rendercase_list`
 - `rendercase_get`
+- `rendercase_get_branding`
 - `rendercase_publish`
 - `rendercase_create_upload`
 - `rendercase_commit_upload`
