@@ -111,6 +111,18 @@ func TestLoadRejectsInvalidS3PathStyle(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsMalformedLimitsAndDurations(t *testing.T) {
+	for _, test := range []struct{ name, value string }{{"RENDERCASE_MAX_BUNDLE_BYTES", "large"}, {"RENDERCASE_MAX_FILES", "many"}, {"RENDERCASE_UPLOAD_TTL", "soon"}, {"RENDERCASE_VIEWER_TICKET_TTL", "later"}, {"RENDERCASE_SESSION_TTL", "today"}, {"RENDERCASE_MAINTENANCE_INTERVAL", "often"}, {"RENDERCASE_AUDIT_RETENTION", "forever"}} {
+		t.Run(test.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv(test.name, test.value)
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), test.name) {
+				t.Fatalf("Load() error = %v", err)
+			}
+		})
+	}
+}
+
 func setRequiredEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("RENDERCASE_PUBLIC_URL", "https://rendercase.example.com")

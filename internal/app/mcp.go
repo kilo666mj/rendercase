@@ -343,7 +343,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 	})
 	if user.Admin {
 		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_get_branding", Description: "Get the instance-wide name, messaging, color theme, and logo status. Administrator access required; binary logo data is omitted.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, brandingOutput, error) {
-			b, err := s.db.Branding(ctx)
+			b, err := s.branding(ctx)
 			if err != nil {
 				return nil, brandingOutput{}, err
 			}
@@ -356,7 +356,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 			return textResult("Current instance branding loaded."), out, nil
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_update_branding", Description: "Replace the instance-wide name, messaging, color theme, and optionally its logo. Use rendercase_admin_get_branding first when preserving current values. Administrator access required; the action is audited.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in brandingInput) (*mcp.CallToolResult, brandingOutput, error) {
-			current, err := s.db.Branding(ctx)
+			current, err := s.branding(ctx)
 			if err != nil {
 				return nil, brandingOutput{}, err
 			}
@@ -380,6 +380,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 			if err := s.db.UpdateBranding(ctx, b); err != nil {
 				return nil, brandingOutput{}, err
 			}
+			s.invalidateBranding()
 			s.auditContext(ctx, user.ID, "", "", "admin.branding.update", map[string]any{"site_name": b.SiteName, "logo": b.HasLogo(), "interface": "mcp"})
 			return textResult("Instance branding updated."), brandingForMCP(b), nil
 		})
@@ -391,8 +392,17 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 				}
 				return nil, brandingOutput{}, err
 			}
+			s.invalidateBranding()
 			s.auditContext(ctx, user.ID, "", "", "admin.branding.activate", map[string]any{"theme_name": b.ThemeName, "interface": "mcp"})
 			return textResult("Branding theme activated."), brandingForMCP(b), nil
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_delete_branding_theme", Description: "Delete a saved inactive branding theme. The active theme cannot be deleted. Administrator access required; the action is audited.", Annotations: mcpkit.Destructive(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in activateBrandingInput) (*mcp.CallToolResult, struct{}, error) {
+			err := s.db.DeleteBrandingTheme(ctx, strings.TrimSpace(in.ThemeName))
+			if err != nil {
+				return nil, struct{}{}, err
+			}
+			s.auditContext(ctx, user.ID, "", "", "admin.branding.delete", map[string]any{"theme_name": in.ThemeName, "interface": "mcp"})
+			return textResult("Saved branding theme deleted."), struct{}{}, nil
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_list", Description: "List every active artifact, its owner, and active capability shares. Administrator access required.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, adminListOutput, error) {
 			artifacts, err := s.db.ListAdminArtifacts(ctx)

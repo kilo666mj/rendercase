@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -45,6 +46,30 @@ type Server struct {
 	tpl                  *template.Template
 	log                  *slog.Logger
 	mcp                  http.Handler
+	brandingMu           sync.Mutex
+	brandingCache        store.Branding
+	brandingExpires      time.Time
+}
+
+const brandingCacheTTL = 30 * time.Second
+
+func (s *Server) branding(ctx context.Context) (store.Branding, error) {
+	s.brandingMu.Lock()
+	defer s.brandingMu.Unlock()
+	if time.Now().Before(s.brandingExpires) {
+		return s.brandingCache, nil
+	}
+	b, err := s.db.Branding(ctx)
+	if err != nil {
+		return store.Branding{}, err
+	}
+	s.brandingCache, s.brandingExpires = b, time.Now().Add(brandingCacheTTL)
+	return b, nil
+}
+func (s *Server) invalidateBranding() {
+	s.brandingMu.Lock()
+	s.brandingExpires = time.Time{}
+	s.brandingMu.Unlock()
 }
 
 type userContextKey struct{}
@@ -115,6 +140,7 @@ func (s *Server) Handler() http.Handler {
 	mainMux.Handle("GET /api/v1/admin/artifacts", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminListArtifacts))))
 	mainMux.Handle("GET /api/v1/admin/branding", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminBranding))))
 	mainMux.Handle("PUT /api/v1/admin/branding", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminBranding))))
+	mainMux.Handle("DELETE /api/v1/admin/branding/themes/{theme}", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminDeleteBrandingTheme))))
 	mainMux.Handle("DELETE /api/v1/admin/shares/{share}", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminRevokeShare))))
 	mainMux.Handle("DELETE /api/v1/admin/artifacts/{artifact}", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminDeleteArtifact))))
 	mainMux.Handle("POST /mcp", s.mcp)
@@ -190,7 +216,7 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) style(w http.ResponseWriter, r *http.Request) {
 	b, _ := webFS.ReadFile("web/style.css")
-	branding, err := s.db.Branding(r.Context())
+	branding, err := s.branding(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -202,8 +228,9 @@ func (s *Server) style(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) favicon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if s.db != nil {
-		if branding, err := s.db.Branding(r.Context()); err == nil && branding.HasLogo() {
+		if branding, err := s.branding(r.Context()); err == nil && branding.HasLogo() {
 			w.Header().Set("Content-Type", branding.LogoMIME)
 			w.Header().Set("Cache-Control", "no-cache")
 			_, _ = w.Write(branding.LogoData)
@@ -216,8 +243,25 @@ func (s *Server) favicon(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b)
 }
 
+func (s *Server) adminDeleteBrandingTheme(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("theme")
+	err := s.db.DeleteBrandingTheme(r.Context(), name)
+	if err != nil {
+		if errors.Is(err, store.ErrActiveTheme) {
+			writeError(w, http.StatusConflict, err.Error())
+		} else if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "theme not found")
+		} else {
+			s.fail(w, r, err)
+		}
+		return
+	}
+	s.audit(r, currentUser(r).ID, "", "", "admin.branding.delete", map[string]any{"theme_name": name})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) brandLogo(w http.ResponseWriter, r *http.Request) {
-	b, err := s.db.Branding(r.Context())
+	b, err := s.branding(r.Context())
 	if err != nil || !b.HasLogo() {
 		http.NotFound(w, r)
 		return
@@ -368,7 +412,7 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 				return
 			}
 			if r.URL.Path == "/" && s.cfg.AuthMode == config.AuthModeOIDC {
-				branding, brandingErr := s.db.Branding(r.Context())
+				branding, brandingErr := s.branding(r.Context())
 				if brandingErr != nil {
 					s.fail(w, r, brandingErr)
 					return
@@ -433,7 +477,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	branding, err := s.db.Branding(r.Context())
+	branding, err := s.branding(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -447,7 +491,7 @@ func (s *Server) adminIndex(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	branding, err := s.db.Branding(r.Context())
+	branding, err := s.branding(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -503,7 +547,7 @@ func (s *Server) renderViewer(r *http.Request, w http.ResponseWriter, v store.Ve
 	subject := v.ArtifactID + ":" + strconv.Itoa(v.Version)
 	ticket := securetoken.Sign(s.cfg.CookieSecret, subject, time.Now().Add(s.cfg.ViewerTicketTTL))
 	source := strings.TrimRight(s.cfg.ContentURL.String(), "/") + "/t/" + ticket + "/" + url.PathEscape(v.ArtifactID) + "/" + strconv.Itoa(v.Version) + "/" + escapePath(v.Entrypoint)
-	branding, err := s.db.Branding(r.Context())
+	branding, err := s.branding(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -529,7 +573,7 @@ func validateBranding(b store.Branding) error {
 }
 
 func (s *Server) adminBranding(w http.ResponseWriter, r *http.Request) {
-	current, err := s.db.Branding(r.Context())
+	current, err := s.branding(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -569,6 +613,7 @@ func (s *Server) adminBranding(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+		s.invalidateBranding()
 		s.audit(r, currentUser(r).ID, "", "", "admin.branding.activate", map[string]any{"theme_name": b.ThemeName})
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -600,9 +645,14 @@ func (s *Server) adminBranding(w http.ResponseWriter, r *http.Request) {
 		b.LogoMIME, b.LogoData = mimeType, data
 	}
 	if err := s.db.UpdateBranding(r.Context(), b); err != nil {
+		if errors.Is(err, store.ErrThemeLimit) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		s.fail(w, r, err)
 		return
 	}
+	s.invalidateBranding()
 	s.audit(r, currentUser(r).ID, "", "", "admin.branding.update", map[string]any{"site_name": b.SiteName, "logo": b.HasLogo()})
 	w.WriteHeader(http.StatusNoContent)
 }

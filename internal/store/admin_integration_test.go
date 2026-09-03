@@ -38,6 +38,21 @@ func TestAdminArtifactLifecycleIntegration(t *testing.T) {
 	if err != nil || active.SiteName != theme.SiteName {
 		t.Fatalf("activate theme = %+v, %v", active, err)
 	}
+	if err := db.DeleteBrandingTheme(ctx, theme.ThemeName); !errors.Is(err, ErrActiveTheme) {
+		t.Fatalf("delete active theme: %v", err)
+	}
+	if _, err := db.ActivateBrandingTheme(ctx, "Default"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteBrandingTheme(ctx, theme.ThemeName); err != nil {
+		t.Fatalf("delete inactive theme: %v", err)
+	}
+	if err := db.DeleteBrandingTheme(ctx, theme.ThemeName); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete missing theme: %v", err)
+	}
+	if err := db.UpdateBranding(ctx, theme); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatalf("second migration: %v", err)
 	}

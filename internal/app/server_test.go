@@ -156,6 +156,9 @@ func TestFavicon(t *testing.T) {
 	if got := response.Header().Get("Content-Type"); got != "image/svg+xml" {
 		t.Fatalf("Content-Type = %q", got)
 	}
+	if got := response.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q", got)
+	}
 	for _, wanted := range []string{`stroke="#67e8f9"`, `fill="#2dd4bf"`, `fill="#a78bfa"`} {
 		if !strings.Contains(response.Body.String(), wanted) {
 			t.Errorf("favicon missing %q", wanted)

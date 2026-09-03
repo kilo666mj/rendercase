@@ -60,7 +60,7 @@ func TestAdminMCPToolsAreVisibleOnlyToAdministrators(t *testing.T) {
 				"rendercase_list", "rendercase_publish", "rendercase_revoke_share", "rendercase_set_visibility", "rendercase_share",
 			}
 			if test.admin {
-				want = append(want, "rendercase_admin_activate_branding_theme", "rendercase_admin_delete_artifact", "rendercase_admin_get_branding", "rendercase_admin_list", "rendercase_admin_revoke_share", "rendercase_admin_update_branding")
+				want = append(want, "rendercase_admin_activate_branding_theme", "rendercase_admin_delete_artifact", "rendercase_admin_delete_branding_theme", "rendercase_admin_get_branding", "rendercase_admin_list", "rendercase_admin_revoke_share", "rendercase_admin_update_branding")
 			}
 			slices.Sort(want)
 			got := make([]string, 0, len(result.Tools))
@@ -75,7 +75,7 @@ func TestAdminMCPToolsAreVisibleOnlyToAdministrators(t *testing.T) {
 					continue
 				}
 				readOnly := slices.Contains([]string{"rendercase_admin_get_branding", "rendercase_admin_list", "rendercase_get", "rendercase_list"}, tool.Name)
-				destructive := slices.Contains([]string{"rendercase_admin_delete_artifact", "rendercase_admin_revoke_share", "rendercase_revoke_share"}, tool.Name)
+				destructive := slices.Contains([]string{"rendercase_admin_delete_artifact", "rendercase_admin_delete_branding_theme", "rendercase_admin_revoke_share", "rendercase_revoke_share"}, tool.Name)
 				if tool.Annotations.ReadOnlyHint != readOnly || *tool.Annotations.DestructiveHint != destructive || *tool.Annotations.OpenWorldHint {
 					t.Errorf("tool %q annotations = %+v", tool.Name, tool.Annotations)
 				}

@@ -18,7 +18,11 @@ var schemaSQL string
 var (
 	ErrNotFound          = errors.New("not found")
 	ErrInvalidVisibility = errors.New("visibility must be private or authenticated")
+	ErrThemeLimit        = errors.New("branding theme limit reached")
+	ErrActiveTheme       = errors.New("active branding theme cannot be deleted")
 )
+
+const MaxBrandingThemes = 50
 
 type DB struct{ Pool *pgxpool.Pool }
 
@@ -68,6 +72,25 @@ func (d *DB) UpdateBranding(ctx context.Context, b Branding) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Serialize branding changes on the singleton row so concurrent saves cannot
+	// both observe room below the saved-theme limit.
+	var activeTheme string
+	if err := tx.QueryRow(ctx, `SELECT theme_name FROM instance_branding WHERE singleton=true FOR UPDATE`).Scan(&activeTheme); err != nil {
+		return err
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM branding_themes WHERE name=$1)`, b.ThemeName).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM branding_themes`).Scan(&count); err != nil {
+			return err
+		}
+		if count >= MaxBrandingThemes {
+			return ErrThemeLimit
+		}
+	}
 	_, err = tx.Exec(ctx, `INSERT INTO branding_themes(name,site_name,tagline,hero_title,hero_highlight,hero_description,background_color,panel_color,text_color,muted_color,primary_color,accent_color,logo_mime,logo_data)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(name) DO UPDATE SET site_name=EXCLUDED.site_name,tagline=EXCLUDED.tagline,hero_title=EXCLUDED.hero_title,hero_highlight=EXCLUDED.hero_highlight,hero_description=EXCLUDED.hero_description,background_color=EXCLUDED.background_color,panel_color=EXCLUDED.panel_color,text_color=EXCLUDED.text_color,muted_color=EXCLUDED.muted_color,primary_color=EXCLUDED.primary_color,accent_color=EXCLUDED.accent_color,logo_mime=EXCLUDED.logo_mime,logo_data=EXCLUDED.logo_data,updated_at=now()`, b.ThemeName, b.SiteName, b.Tagline, b.HeroTitle, b.HeroHighlight, b.HeroDescription, b.BackgroundColor, b.PanelColor, b.TextColor, b.MutedColor, b.PrimaryColor, b.AccentColor, nullString(b.LogoMIME), nullBytes(b.LogoData))
 	if err != nil {
@@ -111,6 +134,26 @@ func (d *DB) ActivateBrandingTheme(ctx context.Context, name string) (Branding, 
 		return b, err
 	}
 	return b, d.UpdateBranding(ctx, b)
+}
+
+func (d *DB) DeleteBrandingTheme(ctx context.Context, name string) error {
+	var deleted string
+	err := d.Pool.QueryRow(ctx, `DELETE FROM branding_themes WHERE name=$1 AND name<>(SELECT theme_name FROM instance_branding WHERE singleton=true) RETURNING name`, name).Scan(&deleted)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	var active bool
+	err = d.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM instance_branding WHERE singleton=true AND theme_name=$1)`, name).Scan(&active)
+	if err != nil {
+		return err
+	}
+	if active {
+		return ErrActiveTheme
+	}
+	return ErrNotFound
 }
 
 func nullString(v string) any {

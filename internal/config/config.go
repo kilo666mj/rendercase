@@ -87,6 +87,34 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	maxBundleBytes, err := envInt64("RENDERCASE_MAX_BUNDLE_BYTES", 25<<20)
+	if err != nil {
+		return Config{}, err
+	}
+	maxFiles, err := envInt("RENDERCASE_MAX_FILES", 500)
+	if err != nil {
+		return Config{}, err
+	}
+	uploadTTL, err := envDuration("RENDERCASE_UPLOAD_TTL", 15*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	viewerTicketTTL, err := envDuration("RENDERCASE_VIEWER_TICKET_TTL", 5*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	sessionTTL, err := envDuration("RENDERCASE_SESSION_TTL", 12*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	maintenanceInterval, err := envDuration("RENDERCASE_MAINTENANCE_INTERVAL", time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	auditRetention, err := envDuration("RENDERCASE_AUDIT_RETENTION", 365*24*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		AuthMode:            envDefault("RENDERCASE_AUTH_MODE", AuthModeOIDC),
 		ListenAddr:          envDefault("RENDERCASE_LISTEN", "127.0.0.1:18100"),
@@ -111,13 +139,13 @@ func Load() (Config, error) {
 		AdminGroups:         csvSet(os.Getenv("RENDERCASE_ADMIN_GROUPS")),
 		OAuthAudience:       envDefault("RENDERCASE_OAUTH_AUDIENCE", publicURL.String()+"mcp"),
 		OAuthScope:          envDefault("RENDERCASE_OAUTH_SCOPE", "rendercase:mcp"),
-		MaxBundleBytes:      envInt64("RENDERCASE_MAX_BUNDLE_BYTES", 25<<20),
-		MaxFiles:            envInt("RENDERCASE_MAX_FILES", 500),
-		UploadTTL:           envDuration("RENDERCASE_UPLOAD_TTL", 15*time.Minute),
-		ViewerTicketTTL:     envDuration("RENDERCASE_VIEWER_TICKET_TTL", 5*time.Minute),
-		SessionTTL:          envDuration("RENDERCASE_SESSION_TTL", 12*time.Hour),
-		MaintenanceInterval: envDuration("RENDERCASE_MAINTENANCE_INTERVAL", time.Hour),
-		AuditRetention:      envDuration("RENDERCASE_AUDIT_RETENTION", 365*24*time.Hour),
+		MaxBundleBytes:      maxBundleBytes,
+		MaxFiles:            maxFiles,
+		UploadTTL:           uploadTTL,
+		ViewerTicketTTL:     viewerTicketTTL,
+		SessionTTL:          sessionTTL,
+		MaintenanceInterval: maintenanceInterval,
+		AuditRetention:      auditRetention,
 		TrustProxyCIDRs:     trustedProxies,
 	}
 	cfg.OAuthAudiences = csv(os.Getenv("RENDERCASE_OAUTH_AUDIENCES"))
@@ -229,40 +257,40 @@ func envDefault(name, fallback string) string {
 	return fallback
 }
 
-func envInt(name string, fallback int) int {
+func envInt(name string, fallback int) (int, error) {
 	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
-		return fallback
+		return fallback, nil
 	}
 	n, err := strconv.Atoi(value)
 	if err != nil {
-		return fallback
+		return 0, fmt.Errorf("%s must be an integer", name)
 	}
-	return n
+	return n, nil
 }
 
-func envInt64(name string, fallback int64) int64 {
+func envInt64(name string, fallback int64) (int64, error) {
 	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
-		return fallback
+		return fallback, nil
 	}
 	n, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
-		return fallback
+		return 0, fmt.Errorf("%s must be an integer", name)
 	}
-	return n
+	return n, nil
 }
 
-func envDuration(name string, fallback time.Duration) time.Duration {
+func envDuration(name string, fallback time.Duration) (time.Duration, error) {
 	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
-		return fallback
+		return fallback, nil
 	}
 	d, err := time.ParseDuration(value)
 	if err != nil {
-		return fallback
+		return 0, fmt.Errorf("%s must be a duration", name)
 	}
-	return d
+	return d, nil
 }
 
 func envBool(name string, fallback bool) (bool, error) {
