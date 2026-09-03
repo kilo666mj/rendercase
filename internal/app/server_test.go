@@ -166,6 +166,19 @@ func TestFavicon(t *testing.T) {
 	}
 }
 
+func TestPrimaryButtonUsesBrandingTokens(t *testing.T) {
+	css, err := webFS.ReadFile("web/style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	style := string(css)
+	for _, wanted := range []string{".button{background:var(--accent)", "color:var(--panel)", ".button:hover{background:var(--violet)"} {
+		if !strings.Contains(style, wanted) {
+			t.Errorf("button style missing %q", wanted)
+		}
+	}
+}
+
 func TestUploadTokenIgnoresQueryString(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPut, "https://rendercase.example/upload?token=logged-secret", nil)
 	if got := uploadToken(request); got != "" {
