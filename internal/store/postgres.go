@@ -512,6 +512,7 @@ func (d *DB) MarkUploadStaged(ctx context.Context, id string, hash []byte, manif
 }
 
 type CommitInput struct {
+	ViewerSubject                                                              string
 	UploadID, UserID, ArtifactID, Title, Entrypoint, ObjectDir, ManifestSHA256 string
 	Manifest                                                                   json.RawMessage
 	ByteSize                                                                   int64
@@ -537,6 +538,15 @@ func (d *DB) CommitVersion(ctx context.Context, in CommitInput) (_ Artifact, _ V
 	}
 	if err != nil {
 		return Artifact{}, Version{}, translate(err)
+	}
+	if in.ViewerSubject != "" {
+		viewerID, lookupErr := publisherViewerID(ctx, tx, in.ViewerSubject)
+		if lookupErr != nil {
+			return Artifact{}, Version{}, lookupErr
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO artifact_grants(artifact_id,user_id,role) VALUES($1,$2,'viewer') ON CONFLICT (artifact_id,user_id) DO NOTHING`, artifactID, viewerID); err != nil {
+			return Artifact{}, Version{}, err
+		}
 	}
 	var next int
 	if err = tx.QueryRow(ctx, `SELECT latest_version+1 FROM artifacts WHERE id=$1 FOR UPDATE`, artifactID).Scan(&next); err != nil {

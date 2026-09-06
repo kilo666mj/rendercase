@@ -372,3 +372,28 @@ The application applies its PostgreSQL schema automatically at startup.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+### Service-account publishing
+
+An agent authenticated as a service account owns its uploads independently of
+browser users. To automatically grant a particular browser user private viewer
+access, set `RENDERCASE_PUBLISHER_VIEWERS` to a JSON object of publisher identity
+subjects mapped to recipient identity subjects:
+
+```sh
+RENDERCASE_PUBLISHER_VIEWERS='{"client-publisher":"recipient-subject"}'
+```
+
+Use exact `users.oidc_subject` values, not email addresses. Cloudflare Access
+identities use the stored `cloudflare_access:` prefix. Each recipient must have
+signed in at least once; an unknown recipient prevents startup, and a missing
+recipient during publication rolls back the database commit. Publishers may be
+configured before their first upload.
+
+The grant is created in the same transaction as publication for API, CLI, and MCP
+uploads, including new versions. Startup also backfills all active artifacts
+owned by mapped publishers. Ownership and visibility remain unchanged, and
+existing grants (including editor grants) are preserved. Unmapped publishers
+retain the normal private defaults. Configure every replica consistently.
+Removing or changing a mapping stops future grants to the old recipient but does
+not revoke existing grants; revoke those separately when retiring access.

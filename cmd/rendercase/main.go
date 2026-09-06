@@ -35,6 +35,14 @@ func main() {
 		logger.Error("database migration failed", "error", err)
 		os.Exit(1)
 	}
+	grantCount, err := db.BackfillPublisherViewers(ctx, cfg.PublisherViewers)
+	if err != nil {
+		logger.Error("publisher viewer configuration failed", "error", err)
+		os.Exit(1)
+	}
+	if len(cfg.PublisherViewers) > 0 {
+		logger.Info("publisher viewer grants reconciled", "mappings", len(cfg.PublisherViewers), "created_grants", grantCount)
+	}
 	staging := blob.Store{Root: cfg.StorageRoot, MaxBundleBytes: cfg.MaxBundleBytes, MaxFiles: cfg.MaxFiles}
 	var blobs blob.Backend = staging
 	if cfg.StorageBackend == config.StorageBackendS3 {

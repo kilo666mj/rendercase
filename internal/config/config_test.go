@@ -133,3 +133,30 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("RENDERCASE_OIDC_CLIENT_ID", "rendercase")
 	t.Setenv("RENDERCASE_OIDC_REDIRECT_URL", "https://rendercase.example.com/api/v1/auth/oidc/callback")
 }
+
+func TestLoadPublisherViewers(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RENDERCASE_PUBLISHER_VIEWERS", `{"client-publisher":"viewer-subject","second-publisher":"cloudflare_access:viewer"}`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PublisherViewers["client-publisher"] != "viewer-subject" || cfg.PublisherViewers["second-publisher"] != "cloudflare_access:viewer" {
+		t.Fatalf("mappings = %v", cfg.PublisherViewers)
+	}
+	for _, raw := range []string{`null`, `[]`, `{"publisher":null}`, `{"publisher":42}`, `{"":"viewer"}`, `{"publisher":" "}`, `{"publisher":"publisher"}`, `{" publisher":"viewer"}`, `{"publisher":"viewer"} trailing`} {
+		t.Run(raw, func(t *testing.T) {
+			t.Setenv("RENDERCASE_PUBLISHER_VIEWERS", raw)
+			if _, err := Load(); err == nil {
+				t.Fatal("invalid mapping accepted")
+			}
+		})
+	}
+	for _, raw := range []string{"", "{}"} {
+		t.Setenv("RENDERCASE_PUBLISHER_VIEWERS", raw)
+		cfg, err := Load()
+		if err != nil || len(cfg.PublisherViewers) != 0 {
+			t.Fatalf("optional mapping = %v, %v", cfg.PublisherViewers, err)
+		}
+	}
+}
