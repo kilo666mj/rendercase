@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -13,6 +14,7 @@ import (
 )
 
 type Config struct {
+	PublisherViewers    map[string]string
 	AuthMode            string
 	ListenAddr          string
 	PublicURL           *url.URL
@@ -115,7 +117,12 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	publisherViewers, err := parsePublisherViewers(os.Getenv("RENDERCASE_PUBLISHER_VIEWERS"))
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
+		PublisherViewers:    publisherViewers,
 		AuthMode:            envDefault("RENDERCASE_AUTH_MODE", AuthModeOIDC),
 		ListenAddr:          envDefault("RENDERCASE_LISTEN", "127.0.0.1:18100"),
 		PublicURL:           publicURL,
@@ -321,4 +328,21 @@ func csvSet(raw string) map[string]struct{} {
 		set[value] = struct{}{}
 	}
 	return set
+}
+
+// Publisher and recipient keys are exact stored identity subjects, never emails.
+func parsePublisherViewers(raw string) (map[string]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var mappings map[string]string
+	if err := json.Unmarshal([]byte(raw), &mappings); err != nil || mappings == nil {
+		return nil, errors.New("RENDERCASE_PUBLISHER_VIEWERS must be a JSON object mapping publisher subjects to viewer subjects")
+	}
+	for publisher, viewer := range mappings {
+		if strings.TrimSpace(publisher) == "" || strings.TrimSpace(viewer) == "" || publisher != strings.TrimSpace(publisher) || viewer != strings.TrimSpace(viewer) || publisher == viewer {
+			return nil, errors.New("RENDERCASE_PUBLISHER_VIEWERS requires distinct, nonempty subjects without surrounding whitespace")
+		}
+	}
+	return mappings, nil
 }

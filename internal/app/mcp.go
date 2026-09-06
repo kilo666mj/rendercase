@@ -572,7 +572,7 @@ func (s *Server) commitForUser(ctx context.Context, user store.User, uploadID, u
 	if err != nil {
 		return store.Artifact{}, store.Version{}, err
 	}
-	return s.db.CommitVersion(ctx, store.CommitInput{UploadID: upload.ID, UserID: user.ID, ArtifactID: upload.ArtifactID, Title: upload.Title, Entrypoint: upload.Entrypoint, ObjectDir: objectDir, Manifest: upload.StagedManifest, ManifestSHA256: upload.StagedSHA256, ByteSize: upload.StagedBytes, FileCount: len(manifest.Files)})
+	return s.db.CommitVersion(ctx, store.CommitInput{ViewerSubject: s.cfg.PublisherViewers[user.Subject], UploadID: upload.ID, UserID: user.ID, ArtifactID: upload.ArtifactID, Title: upload.Title, Entrypoint: upload.Entrypoint, ObjectDir: objectDir, Manifest: upload.StagedManifest, ManifestSHA256: upload.StagedSHA256, ByteSize: upload.StagedBytes, FileCount: len(manifest.Files)})
 }
 
 func textResult(text string) *mcp.CallToolResult {
