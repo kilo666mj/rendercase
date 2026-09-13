@@ -115,6 +115,31 @@ func TestAudienceAllowed(t *testing.T) {
 	}
 }
 
+func TestResolveMCPSubjectDelegatesOnlyFromTrustedSwitchboard(t *testing.T) {
+	if subject, delegated, err := resolveMCPSubject("subject-alice", "client-switchboard", nil); err != nil || delegated || subject != "subject-alice" {
+		t.Fatalf("direct subject = %q delegated=%v err=%v", subject, delegated, err)
+	}
+	if subject, delegated, err := resolveMCPSubject("client-switchboard", "client-switchboard", []string{"subject-alice"}); err != nil || !delegated || subject != "subject-alice" {
+		t.Fatalf("delegated subject = %q delegated=%v err=%v", subject, delegated, err)
+	}
+	for name, test := range map[string]struct {
+		authenticated string
+		trusted       string
+		values        []string
+	}{
+		"disabled":          {"client-switchboard", "", []string{"subject-alice"}},
+		"untrusted bearer":  {"ordinary-user", "client-switchboard", []string{"subject-alice"}},
+		"ambiguous headers": {"client-switchboard", "client-switchboard", []string{"subject-a", "subject-b"}},
+		"blank subject":     {"client-switchboard", "client-switchboard", []string{" "}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := resolveMCPSubject(test.authenticated, test.trusted, test.values); err == nil {
+				t.Fatal("unsafe delegated subject was accepted")
+			}
+		})
+	}
+}
+
 func TestVersionForMCPUsesObjectManifest(t *testing.T) {
 	v, err := versionForMCP(store.Version{
 		ArtifactID: "a_test",

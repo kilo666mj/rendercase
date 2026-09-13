@@ -324,6 +324,16 @@ func (d *DB) UpsertUser(ctx context.Context, subject, username, email, displayNa
 	return u, err
 }
 
+func (d *DB) UserBySubject(ctx context.Context, subject string) (User, error) {
+	var u User
+	err := d.Pool.QueryRow(ctx, `SELECT id,oidc_subject,username,email,display_name,is_admin FROM users WHERE oidc_subject=$1`, subject).
+		Scan(&u.ID, &u.Subject, &u.Username, &u.Email, &u.DisplayName, &u.Admin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrNotFound
+	}
+	return u, err
+}
+
 func (d *DB) CreateSession(ctx context.Context, tokenHash []byte, userID string, expires time.Time) error {
 	_, err := d.Pool.Exec(ctx, `INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,$3)`, tokenHash, userID, expires)
 	return err

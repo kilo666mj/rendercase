@@ -22,6 +22,8 @@ import (
 	"github.com/kilo666mj/rendercase/internal/store"
 )
 
+const switchboardOAuthSubjectHeader = "X-Switchboard-OAuth-Subject"
+
 func (s *Server) mcpHandler() (http.Handler, error) {
 	return mcpkit.StatelessHTTP(func(r *http.Request) *mcp.Server {
 		return s.newMCPServer(currentUser(r))
@@ -70,6 +72,17 @@ func (s *Server) bearerUser(r *http.Request) (store.User, error) {
 		return store.User{}, errors.New("token is missing the Rendercase MCP scope")
 	}
 	subject := stringClaim(claims, "sub")
+	subject, delegated, err := resolveMCPSubject(subject, s.cfg.SwitchboardOAuthSubject, r.Header.Values(switchboardOAuthSubjectHeader))
+	if err != nil {
+		return store.User{}, err
+	}
+	if delegated {
+		user, lookupErr := s.db.UserBySubject(r.Context(), subject)
+		if errors.Is(lookupErr, store.ErrNotFound) {
+			return store.User{}, errors.New("delegated Rendercase user is not registered")
+		}
+		return user, lookupErr
+	}
 	username := stringClaim(claims, "preferred_username")
 	email := stringClaim(claims, "email")
 	name := stringClaim(claims, "name")
@@ -81,6 +94,23 @@ func (s *Server) bearerUser(r *http.Request) (store.User, error) {
 	}
 	_, admin := s.cfg.AdminSubjects[subject]
 	return s.db.UpsertUser(r.Context(), subject, username, email, name, admin)
+}
+
+func resolveMCPSubject(authenticatedSubject, trustedSwitchboardSubject string, values []string) (string, bool, error) {
+	if len(values) == 0 {
+		return authenticatedSubject, false, nil
+	}
+	if len(values) != 1 {
+		return "", false, errors.New("ambiguous Switchboard OAuth subject")
+	}
+	delegated := values[0]
+	if trustedSwitchboardSubject == "" || authenticatedSubject != trustedSwitchboardSubject {
+		return "", false, errors.New("bearer subject cannot delegate a Rendercase user")
+	}
+	if delegated == "" || delegated != strings.TrimSpace(delegated) || len(delegated) > 1024 || strings.ContainsAny(delegated, "\r\n") {
+		return "", false, errors.New("invalid Switchboard OAuth subject")
+	}
+	return delegated, true, nil
 }
 
 func audienceAllowed(tokenAudiences, allowed []string) bool {
