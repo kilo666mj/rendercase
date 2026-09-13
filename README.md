@@ -248,6 +248,15 @@ an API resource matching `RENDERCASE_OAUTH_AUDIENCE` and grant the
 `rendercase:mcp` scope. For Pocket ID, `scripts/configure-pocket-id-api` can
 create that resource when its documented environment variables are present.
 
+When Switchboard authenticates users at a separate MCP resource, set
+`RENDERCASE_SWITCHBOARD_OAUTH_SUBJECT` to the exact subject of Switchboard's
+Rendercase-audience client-credentials token. Rendercase will then accept
+`X-Switchboard-OAuth-Subject` only with that service token and resolve the
+header to an existing Rendercase user. Unknown subjects fail closed, and other
+bearers cannot delegate. Artifact ownership, sharing, and administrator access
+continue to use the resolved Rendercase user. Restrict the upstream route to
+the gateway network as an additional boundary.
+
 Available MCP tools:
 
 - `rendercase_list`
@@ -324,6 +333,7 @@ are listed in [.env.example](.env.example). Optional controls include:
 | `RENDERCASE_CF_ACCESS_AUD` | — | Exact Access application audience tag |
 | `RENDERCASE_ADMIN_GROUPS` | — | Access groups granted administrator rights |
 | `RENDERCASE_OAUTH_SCOPE` | `rendercase:mcp` | Required MCP token scope |
+| `RENDERCASE_SWITCHBOARD_OAUTH_SUBJECT` | — | Switchboard service-client subject allowed to delegate an existing user |
 | `RENDERCASE_MAX_BUNDLE_BYTES` | `26214400` | ZIP and expanded bundle limit |
 | `RENDERCASE_MAX_FILES` | `500` | Maximum files per bundle |
 | `RENDERCASE_UPLOAD_TTL` | `15m` | Upload session lifetime |

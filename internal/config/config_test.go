@@ -35,6 +35,11 @@ func TestLoadAuthModes(t *testing.T) {
 	if cfg.AuthMode != AuthModeOIDC {
 		t.Fatalf("default auth mode = %q", cfg.AuthMode)
 	}
+	t.Setenv("RENDERCASE_SWITCHBOARD_OAUTH_SUBJECT", " client-switchboard ")
+	cfg, err = Load()
+	if err != nil || cfg.SwitchboardOAuthSubject != "client-switchboard" {
+		t.Fatalf("Switchboard OAuth subject = %q, %v", cfg.SwitchboardOAuthSubject, err)
+	}
 
 	t.Setenv("RENDERCASE_AUTH_MODE", AuthModeCloudflareAccess)
 	t.Setenv("RENDERCASE_OIDC_CLIENT_ID", "")
