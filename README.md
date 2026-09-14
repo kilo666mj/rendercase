@@ -369,7 +369,7 @@ vulnerability reporting.
 
 ## Development
 
-Rendercase requires Go 1.26 or newer:
+Rendercase requires Go 1.27.1 or newer:
 
 ```sh
 go test ./...
