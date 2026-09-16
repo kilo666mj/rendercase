@@ -22,6 +22,20 @@ a verified Cloudflare Access identity header. MCP clients continue to use OIDC
 OAuth bearer tokens. There is no hosted Rendercase service and artifact files
 stay on storage you control.
 
+## Place in the agent tooling stack
+
+Rendercase owns immutable, reviewable web artifacts and their sharing policy.
+Use [Wayminder](https://github.com/kilo666mj/wayminder) for durable agent
+knowledge instead of storing memory records in artifact bundles. Use
+[Switchboard](https://github.com/kilo666mj/switchboard) when clients benefit
+from one identity-aware MCP endpoint that federates Rendercase with Wayminder
+and other services.
+
+Those boundaries remain in force when Switchboard fronts Rendercase:
+Rendercase still validates uploads, owns artifact authorization and storage,
+and records the resolved Rendercase user. Switchboard may delegate an existing
+user only through the explicitly configured service identity described below.
+
 The two URLs are a security boundary, not just a routing preference:
 
 - `RENDERCASE_PUBLIC_URL` is the trusted management origin. It serves login,
@@ -131,6 +145,16 @@ Prerequisites:
 For production, back up both Docker volumes, pin image versions, and configure
 proxy/firewall rules so port 18100 is not directly reachable by untrusted
 networks. Trust only the exact proxy addresses allowed to set forwarded IPs.
+
+## Documentation
+
+- [Operations and recovery](docs/operations.md) — health checks, upgrades,
+  backups, restores, and credential rotation
+- [Troubleshooting](docs/troubleshooting.md) — startup, login, MCP, upload, and
+  artifact-viewer failures
+- [MCP client integration](#connect-an-mcp-client) — OAuth, Switchboard
+  delegation, and the current tool inventory
+- [Security policy](SECURITY.md) — vulnerability reporting
 
 ### S3-compatible artifact storage
 
