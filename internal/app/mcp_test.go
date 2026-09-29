@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilo666mj/mcpkit/mcpkittest"
 	"github.com/kilo666mj/rendercase/internal/config"
 	"github.com/kilo666mj/rendercase/internal/store"
+	"go.michaelspost.com/mcpkit/mcpkittest"
 )
 
 func TestMCPTransportBoundsRequestsAndRejectsCrossOrigin(t *testing.T) {
