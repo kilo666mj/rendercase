@@ -15,12 +15,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilo666mj/mcpkit/mcpkittest"
 	"github.com/kilo666mj/rendercase/internal/blob"
 	"github.com/kilo666mj/rendercase/internal/config"
 	"github.com/kilo666mj/rendercase/internal/store"
 	"github.com/kilo666mj/rendercase/internal/testdb"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.michaelspost.com/mcpkit/mcpkittest"
 )
 
 func TestMappedPublisherVisibleInBrowserIntegration(t *testing.T) {

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kilo666mj/mcpkit"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.michaelspost.com/mcpkit"
 
 	"github.com/kilo666mj/rendercase/internal/blob"
 	"github.com/kilo666mj/rendercase/internal/config"
