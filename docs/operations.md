@@ -104,9 +104,11 @@ taking another backup and confirming the matching objects still exist.
   verify browser login and logout.
 - Rotate S3 credentials or workload identity without changing the bucket or
   prefix, and require `/readyz` plus a publish/read test.
-- When changing `RENDERCASE_SWITCHBOARD_OAUTH_SUBJECT`, update Switchboard's
-  service credential and Rendercase as one change. The old subject must no
-  longer be able to delegate.
+- When changing `RENDERCASE_SWITCHBOARD_OAUTH_SUBJECT` or
+  `RENDERCASE_SWITCHBOARD_ACCESS_CLIENT_ID`, update Switchboard's service
+  credential and Rendercase as one change. The old subject or client ID must no
+  longer be able to delegate, so remove a rotated Access service token from the
+  Rendercase Access policy too.
 - Revoke capability shares through the owner or administrator API; do not try
   to recover their plaintext tokens from PostgreSQL because only hashes are
   stored.

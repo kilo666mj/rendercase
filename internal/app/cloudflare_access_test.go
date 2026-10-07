@@ -282,3 +282,105 @@ func signAccessJWT(t *testing.T, signer jose.Signer, issuer, audience string, pr
 	}
 	return raw
 }
+
+func TestRequireBearerCloudflareAccessSwitchboardDelegation(t *testing.T) {
+	const issuer = "https://example.cloudflareaccess.com"
+	const audience = "access-audience"
+	const switchboardClientID = "switchboard.access"
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicURL, err := url.Parse("https://rendercase.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{
+		cfg:        config.Config{AuthMode: config.AuthModeCloudflareAccess, PublicURL: publicURL, SwitchboardAccessClientID: switchboardClientID},
+		cfVerifier: oidc.NewVerifier(issuer, rsaKeySet{publicKey: &key.PublicKey}, &oidc.Config{ClientID: audience}),
+		cloudflareUserUpsert: func(_ context.Context, user store.User) (store.User, error) {
+			user.ID = "upserted:" + user.Subject
+			return user, nil
+		},
+		userBySubject: func(_ context.Context, subject string) (store.User, error) {
+			if subject != "cloudflare_access:alice-subject" {
+				return store.User{}, store.ErrNotFound
+			}
+			return store.User{ID: "alice", Subject: subject, Admin: true}, nil
+		},
+	}
+	serviceToken := func(clientID string) string {
+		return signAccessJWT(t, signer, issuer, audience, map[string]any{"sub": "", "common_name": clientID, "type": "app"})
+	}
+	userToken := signAccessJWT(t, signer, issuer, audience, map[string]any{"sub": "bob-subject", "email": "bob@example.com", "type": "app"})
+	serve := func(assertion string, delegated ...string) (store.User, int) {
+		request := httptest.NewRequest(http.MethodPost, publicURL.JoinPath("mcp").String(), nil)
+		request.Header.Set(cfAccessJWTHeader, assertion)
+		for _, value := range delegated {
+			request.Header.Add(switchboardAccessSubjectHeader, value)
+		}
+		response := httptest.NewRecorder()
+		var user store.User
+		s.requireBearer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user = currentUser(r)
+			w.WriteHeader(http.StatusNoContent)
+		})).ServeHTTP(response, request)
+		return user, response.Code
+	}
+
+	if user, code := serve(serviceToken(switchboardClientID), "alice-subject"); code != http.StatusNoContent || user.ID != "alice" || !user.Admin {
+		t.Fatalf("delegated user = %+v, status = %d", user, code)
+	}
+	if user, code := serve(userToken); code != http.StatusNoContent || user.ID != "upserted:cloudflare_access:bob-subject" {
+		t.Fatalf("direct user = %+v, status = %d", user, code)
+	}
+	for name, test := range map[string]struct {
+		assertion string
+		delegated []string
+	}{
+		"unknown delegated user":        {serviceToken(switchboardClientID), []string{"mallory-subject"}},
+		"switchboard without subject":   {serviceToken(switchboardClientID), nil},
+		"ambiguous subjects":            {serviceToken(switchboardClientID), []string{"alice-subject", "bob-subject"}},
+		"blank subject":                 {serviceToken(switchboardClientID), []string{" "}},
+		"untrusted service token":       {serviceToken("other.access"), []string{"alice-subject"}},
+		"other service token as itself": {serviceToken("other.access"), nil},
+		"user token delegating":         {userToken, []string{"alice-subject"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if user, code := serve(test.assertion, test.delegated...); code != http.StatusUnauthorized {
+				t.Fatalf("user = %+v, status = %d", user, code)
+			}
+		})
+	}
+
+	s.cfg.SwitchboardAccessClientID = ""
+	if _, code := serve(serviceToken(switchboardClientID), "alice-subject"); code != http.StatusUnauthorized {
+		t.Fatalf("delegation accepted while disabled, status = %d", code)
+	}
+}
+
+func TestCloudflareAccessBrowserRejectsServiceTokenDelegation(t *testing.T) {
+	const issuer = "https://example.cloudflareaccess.com"
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{
+		cfg:        config.Config{AuthMode: config.AuthModeCloudflareAccess, SwitchboardAccessClientID: "switchboard.access"},
+		cfVerifier: oidc.NewVerifier(issuer, rsaKeySet{publicKey: &key.PublicKey}, &oidc.Config{ClientID: "aud"}),
+	}
+	request := httptest.NewRequest(http.MethodGet, "https://rendercase.example.com/", nil)
+	request.Header.Set(cfAccessJWTHeader, signAccessJWT(t, signer, issuer, "aud", map[string]any{"sub": "", "common_name": "switchboard.access", "type": "app"}))
+	request.Header.Set(switchboardAccessSubjectHeader, "alice-subject")
+	if _, err := s.browserUser(request); err == nil {
+		t.Fatal("browser route accepted Switchboard delegation")
+	}
+}

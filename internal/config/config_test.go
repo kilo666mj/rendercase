@@ -40,6 +40,11 @@ func TestLoadAuthModes(t *testing.T) {
 	if err != nil || cfg.SwitchboardOAuthSubject != "client-switchboard" {
 		t.Fatalf("Switchboard OAuth subject = %q, %v", cfg.SwitchboardOAuthSubject, err)
 	}
+	t.Setenv("RENDERCASE_SWITCHBOARD_ACCESS_CLIENT_ID", " switchboard.access ")
+	cfg, err = Load()
+	if err != nil || cfg.SwitchboardAccessClientID != "switchboard.access" {
+		t.Fatalf("Switchboard Access client ID = %q, %v", cfg.SwitchboardAccessClientID, err)
+	}
 
 	t.Setenv("RENDERCASE_AUTH_MODE", AuthModeCloudflareAccess)
 	t.Setenv("RENDERCASE_OIDC_CLIENT_ID", "")

@@ -67,6 +67,13 @@ Switchboard delegation works only when the bearer belongs to the exact
 fails closed. Confirm the target user has signed in to Rendercase at least once
 and restrict the upstream route to the gateway network.
 
+In Cloudflare Access mode the same rules apply to
+`X-Switchboard-Access-Subject`: the assertion must come from the service token
+whose client ID is `RENDERCASE_SWITCHBOARD_ACCESS_CLIENT_ID`, and the header
+must carry the user's Access `sub`, not an email address. A user who has never
+opened Rendercase is not registered. If every delegated subject is unknown,
+check that Switchboard and Rendercase share one Cloudflare Access team.
+
 ## An upload or commit fails
 
 Upload sessions expire after `RENDERCASE_UPLOAD_TTL` and cannot be revived;

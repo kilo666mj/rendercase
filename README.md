@@ -281,6 +281,16 @@ bearers cannot delegate. Artifact ownership, sharing, and administrator access
 continue to use the resolved Rendercase user. Restrict the upstream route to
 the gateway network as an additional boundary.
 
+In Cloudflare Access mode, set `RENDERCASE_SWITCHBOARD_ACCESS_CLIENT_ID` to the
+client ID of Switchboard's Access service token, and allow that token in the
+Rendercase Access application policy. Rendercase then accepts
+`X-Switchboard-Access-Subject` only on MCP requests whose verified assertion
+belongs to that service token, and resolves the header, the user's Access
+`sub`, to an existing `cloudflare_access:<sub>` user. That service token must
+always name a user, other service tokens and user assertions cannot delegate,
+and browser routes never honour the header. Switchboard and Rendercase must use
+the same Cloudflare Access team so user subjects match.
+
 Available MCP tools:
 
 - `rendercase_list`
@@ -358,6 +368,7 @@ are listed in [.env.example](.env.example). Optional controls include:
 | `RENDERCASE_ADMIN_GROUPS` | — | Access groups granted administrator rights |
 | `RENDERCASE_OAUTH_SCOPE` | `rendercase:mcp` | Required MCP token scope |
 | `RENDERCASE_SWITCHBOARD_OAUTH_SUBJECT` | — | Switchboard service-client subject allowed to delegate an existing user |
+| `RENDERCASE_SWITCHBOARD_ACCESS_CLIENT_ID` | — | Switchboard Access service-token client ID allowed to delegate an existing user |
 | `RENDERCASE_MAX_BUNDLE_BYTES` | `26214400` | ZIP and expanded bundle limit |
 | `RENDERCASE_MAX_FILES` | `500` | Maximum files per bundle |
 | `RENDERCASE_UPLOAD_TTL` | `15m` | Upload session lifetime |
