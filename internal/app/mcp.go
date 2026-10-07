@@ -29,7 +29,11 @@ const (
 
 func (s *Server) mcpHandler() (http.Handler, error) {
 	return mcpkit.StatelessHTTP(func(r *http.Request) *mcp.Server {
-		return s.newMCPServer(currentUser(r))
+		server := s.newMCPServer(currentUser(r))
+		if discoveryOnly, _ := r.Context().Value(discoveryOnlyContextKey{}).(bool); discoveryOnly {
+			server.AddReceivingMiddleware(discoveryOnlyMiddleware)
+		}
+		return server
 	}, mcpkit.HTTPOptions{
 		MaxRequestBodyBytes: ((s.cfg.MaxBundleBytes + 2) / 3 * 4) + (1 << 20),
 		Logger:              s.log,
@@ -38,21 +42,41 @@ func (s *Server) mcpHandler() (http.Handler, error) {
 
 func (s *Server) requireBearer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		u, err := s.mcpBearerUser(r)
+		u, discoveryOnly, err := s.mcpBearerUser(r)
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="rendercase-mcp", error="invalid_token", resource_metadata="`+strings.TrimRight(s.cfg.PublicURL.String(), "/")+`/.well-known/oauth-protected-resource/mcp"`)
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userContextKey{}, u)))
+		ctx := context.WithValue(r.Context(), userContextKey{}, u)
+		if discoveryOnly {
+			ctx = context.WithValue(ctx, discoveryOnlyContextKey{}, true)
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-func (s *Server) mcpBearerUser(r *http.Request) (store.User, error) {
+type discoveryOnlyContextKey struct{}
+
+func (s *Server) mcpBearerUser(r *http.Request) (store.User, bool, error) {
 	if s.cfg.AuthMode == config.AuthModeCloudflareAccess {
 		return s.cloudflareAccessMCPUser(r)
 	}
-	return s.bearerUser(r)
+	user, err := s.bearerUser(r)
+	return user, false, err
+}
+
+// discoveryOnlyMiddleware admits only the MCP methods a gateway needs to list
+// tools before any user is bound. It runs on the SDK's own decoded method, so
+// the decision always matches what the server would execute.
+func discoveryOnlyMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		switch {
+		case method == "initialize", method == "ping", method == "tools/list", strings.HasPrefix(method, "notifications/"):
+			return next(ctx, method, req)
+		}
+		return nil, errors.New("the Switchboard service token must delegate a Rendercase user")
+	}
 }
 
 func (s *Server) bearerUser(r *http.Request) (store.User, error) {
