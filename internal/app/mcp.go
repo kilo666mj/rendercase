@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"slices"
 	"strconv"
@@ -30,7 +29,11 @@ const (
 
 func (s *Server) mcpHandler() (http.Handler, error) {
 	return mcpkit.StatelessHTTP(func(r *http.Request) *mcp.Server {
-		return s.newMCPServer(currentUser(r))
+		server := s.newMCPServer(currentUser(r))
+		if discoveryOnly, _ := r.Context().Value(discoveryOnlyContextKey{}).(bool); discoveryOnly {
+			server.AddReceivingMiddleware(discoveryOnlyMiddleware)
+		}
+		return server
 	}, mcpkit.HTTPOptions{
 		MaxRequestBodyBytes: ((s.cfg.MaxBundleBytes + 2) / 3 * 4) + (1 << 20),
 		Logger:              s.log,
@@ -40,17 +43,20 @@ func (s *Server) mcpHandler() (http.Handler, error) {
 func (s *Server) requireBearer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, discoveryOnly, err := s.mcpBearerUser(r)
-		if err == nil && discoveryOnly {
-			err = requireDiscoveryRequest(r)
-		}
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="rendercase-mcp", error="invalid_token", resource_metadata="`+strings.TrimRight(s.cfg.PublicURL.String(), "/")+`/.well-known/oauth-protected-resource/mcp"`)
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userContextKey{}, u)))
+		ctx := context.WithValue(r.Context(), userContextKey{}, u)
+		if discoveryOnly {
+			ctx = context.WithValue(ctx, discoveryOnlyContextKey{}, true)
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
+
+type discoveryOnlyContextKey struct{}
 
 func (s *Server) mcpBearerUser(r *http.Request) (store.User, bool, error) {
 	if s.cfg.AuthMode == config.AuthModeCloudflareAccess {
@@ -60,39 +66,17 @@ func (s *Server) mcpBearerUser(r *http.Request) (store.User, bool, error) {
 	return user, false, err
 }
 
-const maxDiscoveryBodyBytes = 64 << 10
-
-// requireDiscoveryRequest admits only the JSON-RPC messages a gateway needs to
-// list tools before any user is bound. The body is restored for the handler.
-func requireDiscoveryRequest(r *http.Request) error {
-	denied := errors.New("the Switchboard service token must delegate a Rendercase user")
-	if r.Method != http.MethodPost || r.Body == nil {
-		return denied
-	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxDiscoveryBodyBytes+1))
-	if err != nil || len(raw) > maxDiscoveryBodyBytes {
-		return denied
-	}
-	r.Body = io.NopCloser(bytes.NewReader(raw))
-	var messages []struct {
-		Method string `json:"method"`
-	}
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) > 0 && trimmed[0] == '{' {
-		trimmed = append(append([]byte{'['}, trimmed...), ']')
-	}
-	if err := json.Unmarshal(trimmed, &messages); err != nil || len(messages) == 0 {
-		return denied
-	}
-	for _, message := range messages {
+// discoveryOnlyMiddleware admits only the MCP methods a gateway needs to list
+// tools before any user is bound. It runs on the SDK's own decoded method, so
+// the decision always matches what the server would execute.
+func discoveryOnlyMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		switch {
-		case message.Method == "initialize", message.Method == "ping", message.Method == "tools/list",
-			strings.HasPrefix(message.Method, "notifications/"):
-		default:
-			return denied
+		case method == "initialize", method == "ping", method == "tools/list", strings.HasPrefix(method, "notifications/"):
+			return next(ctx, method, req)
 		}
+		return nil, errors.New("the Switchboard service token must delegate a Rendercase user")
 	}
-	return nil
 }
 
 func (s *Server) bearerUser(r *http.Request) (store.User, error) {
