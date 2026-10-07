@@ -43,6 +43,7 @@ type Server struct {
 	accessVerifier       *oidc.IDTokenVerifier
 	cfVerifier           *oidc.IDTokenVerifier
 	cloudflareUserUpsert func(context.Context, store.User) (store.User, error)
+	userBySubject        func(context.Context, string) (store.User, error)
 	tpl                  *template.Template
 	log                  *slog.Logger
 	mcp                  http.Handler

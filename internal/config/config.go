@@ -48,7 +48,8 @@ type Config struct {
 	AuditRetention      time.Duration
 	TrustProxyCIDRs     []netip.Prefix
 
-	SwitchboardOAuthSubject string
+	SwitchboardOAuthSubject   string
+	SwitchboardAccessClientID string
 }
 
 const (
@@ -157,7 +158,8 @@ func Load() (Config, error) {
 		AuditRetention:      auditRetention,
 		TrustProxyCIDRs:     trustedProxies,
 
-		SwitchboardOAuthSubject: strings.TrimSpace(os.Getenv("RENDERCASE_SWITCHBOARD_OAUTH_SUBJECT")),
+		SwitchboardOAuthSubject:   strings.TrimSpace(os.Getenv("RENDERCASE_SWITCHBOARD_OAUTH_SUBJECT")),
+		SwitchboardAccessClientID: strings.TrimSpace(os.Getenv("RENDERCASE_SWITCHBOARD_ACCESS_CLIENT_ID")),
 	}
 	cfg.OAuthAudiences = csv(os.Getenv("RENDERCASE_OAUTH_AUDIENCES"))
 	if len(cfg.OAuthAudiences) == 0 {

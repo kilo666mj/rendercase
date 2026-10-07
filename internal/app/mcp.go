@@ -22,7 +22,10 @@ import (
 	"github.com/kilo666mj/rendercase/internal/store"
 )
 
-const switchboardOAuthSubjectHeader = "X-Switchboard-OAuth-Subject"
+const (
+	switchboardOAuthSubjectHeader  = "X-Switchboard-OAuth-Subject"
+	switchboardAccessSubjectHeader = "X-Switchboard-Access-Subject"
+)
 
 func (s *Server) mcpHandler() (http.Handler, error) {
 	return mcpkit.StatelessHTTP(func(r *http.Request) *mcp.Server {
@@ -47,7 +50,7 @@ func (s *Server) requireBearer(next http.Handler) http.Handler {
 
 func (s *Server) mcpBearerUser(r *http.Request) (store.User, error) {
 	if s.cfg.AuthMode == config.AuthModeCloudflareAccess {
-		return s.cloudflareAccessUser(r)
+		return s.cloudflareAccessMCPUser(r)
 	}
 	return s.bearerUser(r)
 }
@@ -77,11 +80,7 @@ func (s *Server) bearerUser(r *http.Request) (store.User, error) {
 		return store.User{}, err
 	}
 	if delegated {
-		user, lookupErr := s.db.UserBySubject(r.Context(), subject)
-		if errors.Is(lookupErr, store.ErrNotFound) {
-			return store.User{}, errors.New("delegated Rendercase user is not registered")
-		}
-		return user, lookupErr
+		return s.delegatedUser(r.Context(), subject)
 	}
 	username := stringClaim(claims, "preferred_username")
 	email := stringClaim(claims, "email")
@@ -96,19 +95,33 @@ func (s *Server) bearerUser(r *http.Request) (store.User, error) {
 	return s.db.UpsertUser(r.Context(), subject, username, email, name, admin)
 }
 
+// delegatedUser resolves a gateway-delegated subject to an existing user.
+// Delegation never creates users, so unknown subjects fail closed.
+func (s *Server) delegatedUser(ctx context.Context, subject string) (store.User, error) {
+	lookup := s.userBySubject
+	if lookup == nil {
+		lookup = s.db.UserBySubject
+	}
+	user, err := lookup(ctx, subject)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.User{}, errors.New("delegated Rendercase user is not registered")
+	}
+	return user, err
+}
+
 func resolveMCPSubject(authenticatedSubject, trustedSwitchboardSubject string, values []string) (string, bool, error) {
 	if len(values) == 0 {
 		return authenticatedSubject, false, nil
 	}
 	if len(values) != 1 {
-		return "", false, errors.New("ambiguous Switchboard OAuth subject")
+		return "", false, errors.New("ambiguous Switchboard delegated subject")
 	}
 	delegated := values[0]
 	if trustedSwitchboardSubject == "" || authenticatedSubject != trustedSwitchboardSubject {
-		return "", false, errors.New("bearer subject cannot delegate a Rendercase user")
+		return "", false, errors.New("authenticated identity cannot delegate a Rendercase user")
 	}
 	if delegated == "" || delegated != strings.TrimSpace(delegated) || len(delegated) > 1024 || strings.ContainsAny(delegated, "\r\n") {
-		return "", false, errors.New("invalid Switchboard OAuth subject")
+		return "", false, errors.New("invalid Switchboard delegated subject")
 	}
 	return delegated, true, nil
 }
