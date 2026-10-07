@@ -53,7 +53,7 @@ func (s *Server) cloudflareAccessMCPUser(r *http.Request) (store.User, error) {
 		return store.User{}, err
 	}
 	if !delegated {
-		return store.User{}, errors.New("Cloudflare Access service token requires a delegated Rendercase user")
+		return store.User{}, errors.New("service token requires a delegated Rendercase user")
 	}
 	return s.delegatedUser(r.Context(), "cloudflare_access:"+subject)
 }
