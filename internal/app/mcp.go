@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"strconv"
@@ -38,7 +39,10 @@ func (s *Server) mcpHandler() (http.Handler, error) {
 
 func (s *Server) requireBearer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		u, err := s.mcpBearerUser(r)
+		u, discoveryOnly, err := s.mcpBearerUser(r)
+		if err == nil && discoveryOnly {
+			err = requireDiscoveryRequest(r)
+		}
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="rendercase-mcp", error="invalid_token", resource_metadata="`+strings.TrimRight(s.cfg.PublicURL.String(), "/")+`/.well-known/oauth-protected-resource/mcp"`)
 			writeError(w, http.StatusUnauthorized, err.Error())
@@ -48,11 +52,47 @@ func (s *Server) requireBearer(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) mcpBearerUser(r *http.Request) (store.User, error) {
+func (s *Server) mcpBearerUser(r *http.Request) (store.User, bool, error) {
 	if s.cfg.AuthMode == config.AuthModeCloudflareAccess {
 		return s.cloudflareAccessMCPUser(r)
 	}
-	return s.bearerUser(r)
+	user, err := s.bearerUser(r)
+	return user, false, err
+}
+
+const maxDiscoveryBodyBytes = 64 << 10
+
+// requireDiscoveryRequest admits only the JSON-RPC messages a gateway needs to
+// list tools before any user is bound. The body is restored for the handler.
+func requireDiscoveryRequest(r *http.Request) error {
+	denied := errors.New("the Switchboard service token must delegate a Rendercase user")
+	if r.Method != http.MethodPost || r.Body == nil {
+		return denied
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxDiscoveryBodyBytes+1))
+	if err != nil || len(raw) > maxDiscoveryBodyBytes {
+		return denied
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	var messages []struct {
+		Method string `json:"method"`
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) > 0 && trimmed[0] == '{' {
+		trimmed = append(append([]byte{'['}, trimmed...), ']')
+	}
+	if err := json.Unmarshal(trimmed, &messages); err != nil || len(messages) == 0 {
+		return denied
+	}
+	for _, message := range messages {
+		switch {
+		case message.Method == "initialize", message.Method == "ping", message.Method == "tools/list",
+			strings.HasPrefix(message.Method, "notifications/"):
+		default:
+			return denied
+		}
+	}
+	return nil
 }
 
 func (s *Server) bearerUser(r *http.Request) (store.User, error) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/kilo666mj/rendercase/internal/store"
 )
@@ -30,32 +31,43 @@ func (s *Server) cloudflareAccessUserFromJWT(ctx context.Context, raw string) (s
 
 // cloudflareAccessMCPUser authenticates an MCP request. Switchboard's Access
 // service token may act for an existing Rendercase user named in
-// X-Switchboard-Access-Subject; every other caller acts as itself.
-func (s *Server) cloudflareAccessMCPUser(r *http.Request) (store.User, error) {
+// X-Switchboard-Access-Subject as cloudflare_access:<sub>, the form Switchboard
+// forwards. Without the header it is limited to tool discovery and never acts
+// as a stored user. Every other caller acts as itself.
+func (s *Server) cloudflareAccessMCPUser(r *http.Request) (store.User, bool, error) {
 	claims, err := s.verifyCloudflareAccessClaims(r.Context(), r.Header.Get(cfAccessJWTHeader))
 	if err != nil {
-		return store.User{}, err
+		return store.User{}, false, err
 	}
 	values := r.Header.Values(switchboardAccessSubjectHeader)
 	clientID := cloudflareAccessServiceTokenClientID(claims)
 	if clientID == "" {
 		if len(values) != 0 {
-			return store.User{}, errors.New("authenticated identity cannot delegate a Rendercase user")
+			return store.User{}, false, errors.New("authenticated identity cannot delegate a Rendercase user")
 		}
 		identity, err := cloudflareAccessIdentityFromClaims(claims)
 		if err != nil {
-			return store.User{}, err
+			return store.User{}, false, err
 		}
-		return s.upsertCloudflareAccessUser(r.Context(), identity)
+		user, err := s.upsertCloudflareAccessUser(r.Context(), identity)
+		return user, false, err
+	}
+	if s.cfg.SwitchboardAccessClientID == "" || clientID != s.cfg.SwitchboardAccessClientID {
+		return store.User{}, false, errors.New("authenticated identity cannot use Rendercase")
 	}
 	subject, delegated, err := resolveMCPSubject(clientID, s.cfg.SwitchboardAccessClientID, values)
 	if err != nil {
-		return store.User{}, err
+		return store.User{}, false, err
 	}
 	if !delegated {
-		return store.User{}, errors.New("service token requires a delegated Rendercase user")
+		return store.User{Subject: "cloudflare_access:service_token:" + clientID, Username: "switchboard", DisplayName: "Switchboard"}, true, nil
 	}
-	return s.delegatedUser(r.Context(), "cloudflare_access:"+subject)
+	if !strings.HasPrefix(subject, "cloudflare_access:") || subject == "cloudflare_access:" ||
+		strings.HasPrefix(subject, "cloudflare_access:service_token:") {
+		return store.User{}, false, errors.New("invalid Switchboard delegated subject")
+	}
+	user, err := s.delegatedUser(r.Context(), subject)
+	return user, false, err
 }
 
 // cloudflareAccessServiceTokenClientID returns the client ID of a service-token

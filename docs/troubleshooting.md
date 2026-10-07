@@ -70,9 +70,11 @@ and restrict the upstream route to the gateway network.
 In Cloudflare Access mode the same rules apply to
 `X-Switchboard-Access-Subject`: the assertion must come from the service token
 whose client ID is `RENDERCASE_SWITCHBOARD_ACCESS_CLIENT_ID`, and the header
-must carry the user's Access `sub`, not an email address. A user who has never
-opened Rendercase is not registered. If every delegated subject is unknown,
-check that Switchboard and Rendercase share one Cloudflare Access team.
+must carry `cloudflare_access:<sub>`, not an email address or a bare `sub`. A
+user who has never opened Rendercase is not registered. If every delegated
+subject is unknown, check that Switchboard and Rendercase share one Cloudflare
+Access team. If Switchboard lists tools but every call is rejected, confirm it
+forwards the subject; without it the service token is limited to discovery.
 
 ## An upload or commit fails
 

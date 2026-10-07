@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -332,7 +333,7 @@ func TestRequireBearerCloudflareAccessSwitchboardDelegation(t *testing.T) {
 		return user, response.Code
 	}
 
-	if user, code := serve(serviceToken(switchboardClientID), "alice-subject"); code != http.StatusNoContent || user.ID != "alice" || !user.Admin {
+	if user, code := serve(serviceToken(switchboardClientID), "cloudflare_access:alice-subject"); code != http.StatusNoContent || user.ID != "alice" || !user.Admin {
 		t.Fatalf("delegated user = %+v, status = %d", user, code)
 	}
 	if user, code := serve(userToken); code != http.StatusNoContent || user.ID != "upserted:cloudflare_access:bob-subject" {
@@ -342,13 +343,17 @@ func TestRequireBearerCloudflareAccessSwitchboardDelegation(t *testing.T) {
 		assertion string
 		delegated []string
 	}{
-		"unknown delegated user":        {serviceToken(switchboardClientID), []string{"mallory-subject"}},
+		"unknown delegated user":        {serviceToken(switchboardClientID), []string{"cloudflare_access:mallory-subject"}},
 		"switchboard without subject":   {serviceToken(switchboardClientID), nil},
-		"ambiguous subjects":            {serviceToken(switchboardClientID), []string{"alice-subject", "bob-subject"}},
+		"ambiguous subjects":            {serviceToken(switchboardClientID), []string{"cloudflare_access:alice-subject", "cloudflare_access:bob-subject"}},
 		"blank subject":                 {serviceToken(switchboardClientID), []string{" "}},
-		"untrusted service token":       {serviceToken("other.access"), []string{"alice-subject"}},
+		"unprefixed subject":            {serviceToken(switchboardClientID), []string{"alice-subject"}},
+		"bare prefix":                   {serviceToken(switchboardClientID), []string{"cloudflare_access:"}},
+		"service token subject":         {serviceToken(switchboardClientID), []string{"cloudflare_access:service_token:x"}},
+		"line break":                    {serviceToken(switchboardClientID), []string{"cloudflare_access:alice-subject\nx"}},
+		"untrusted service token":       {serviceToken("other.access"), []string{"cloudflare_access:alice-subject"}},
 		"other service token as itself": {serviceToken("other.access"), nil},
-		"user token delegating":         {userToken, []string{"alice-subject"}},
+		"user token delegating":         {userToken, []string{"cloudflare_access:alice-subject"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if user, code := serve(test.assertion, test.delegated...); code != http.StatusUnauthorized {
@@ -357,8 +362,55 @@ func TestRequireBearerCloudflareAccessSwitchboardDelegation(t *testing.T) {
 		})
 	}
 
+	discover := func(assertion, method, body string) (store.User, int) {
+		request := httptest.NewRequest(method, publicURL.JoinPath("mcp").String(), strings.NewReader(body))
+		request.Header.Set(cfAccessJWTHeader, assertion)
+		response := httptest.NewRecorder()
+		var user store.User
+		s.requireBearer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user = currentUser(r)
+			got, err := io.ReadAll(r.Body)
+			if err != nil || string(got) != body {
+				t.Fatalf("handler body = %q, %v", got, err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})).ServeHTTP(response, request)
+		return user, response.Code
+	}
+	for name, test := range map[string]struct {
+		method, body string
+		allowed      bool
+	}{
+		"initialize":   {http.MethodPost, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`, true},
+		"tools list":   {http.MethodPost, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`, true},
+		"notification": {http.MethodPost, `{"jsonrpc":"2.0","method":"notifications/initialized"}`, true},
+		"batch":        {http.MethodPost, `[{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","id":2,"method":"tools/list"}]`, true},
+		"tool call":    {http.MethodPost, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"rendercase_list"}}`, false},
+		"mixed batch":  {http.MethodPost, `[{"jsonrpc":"2.0","id":1,"method":"tools/list"},{"jsonrpc":"2.0","id":2,"method":"tools/call"}]`, false},
+		"empty batch":  {http.MethodPost, `[]`, false},
+		"not json":     {http.MethodPost, `tools/list`, false},
+		"oversize":     {http.MethodPost, `{"jsonrpc":"2.0","id":2,"method":"tools/list","pad":"` + strings.Repeat("a", maxDiscoveryBodyBytes) + `"}`, false},
+		"get":          {http.MethodGet, ``, false},
+	} {
+		t.Run("discovery "+name, func(t *testing.T) {
+			user, code := discover(serviceToken(switchboardClientID), test.method, test.body)
+			if test.allowed != (code == http.StatusNoContent) || (!test.allowed && code != http.StatusUnauthorized) {
+				t.Fatalf("status = %d", code)
+			}
+			if test.allowed && (user.ID != "" || user.Admin) {
+				t.Fatalf("discovery user = %+v", user)
+			}
+		})
+	}
+	if _, code := discover(serviceToken("other.access"), http.MethodPost, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`); code != http.StatusUnauthorized {
+		t.Fatalf("untrusted service token discovered tools, status = %d", code)
+	}
+
 	s.cfg.SwitchboardAccessClientID = ""
-	if _, code := serve(serviceToken(switchboardClientID), "alice-subject"); code != http.StatusUnauthorized {
+	if _, code := discover(serviceToken(switchboardClientID), http.MethodPost, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`); code != http.StatusUnauthorized {
+		t.Fatalf("discovery accepted while disabled, status = %d", code)
+	}
+	if _, code := serve(serviceToken(switchboardClientID), "cloudflare_access:alice-subject"); code != http.StatusUnauthorized {
 		t.Fatalf("delegation accepted while disabled, status = %d", code)
 	}
 }
@@ -379,7 +431,7 @@ func TestCloudflareAccessBrowserRejectsServiceTokenDelegation(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodGet, "https://rendercase.example.com/", nil)
 	request.Header.Set(cfAccessJWTHeader, signAccessJWT(t, signer, issuer, "aud", map[string]any{"sub": "", "common_name": "switchboard.access", "type": "app"}))
-	request.Header.Set(switchboardAccessSubjectHeader, "alice-subject")
+	request.Header.Set(switchboardAccessSubjectHeader, "cloudflare_access:alice-subject")
 	if _, err := s.browserUser(request); err == nil {
 		t.Fatal("browser route accepted Switchboard delegation")
 	}

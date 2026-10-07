@@ -285,11 +285,14 @@ In Cloudflare Access mode, set `RENDERCASE_SWITCHBOARD_ACCESS_CLIENT_ID` to the
 client ID of Switchboard's Access service token, and allow that token in the
 Rendercase Access application policy. Rendercase then accepts
 `X-Switchboard-Access-Subject` only on MCP requests whose verified assertion
-belongs to that service token, and resolves the header, the user's Access
-`sub`, to an existing `cloudflare_access:<sub>` user. That service token must
-always name a user, other service tokens and user assertions cannot delegate,
-and browser routes never honour the header. Switchboard and Rendercase must use
-the same Cloudflare Access team so user subjects match.
+belongs to that service token. The header carries the person as
+`cloudflare_access:<sub>`, the form Switchboard forwards, and must name an
+existing Rendercase user. Without the header that service token may only
+initialize the MCP session and list tools, as a non-administrator that is never
+stored, so Switchboard can discover tools at startup. Other service tokens and
+user assertions cannot delegate, and browser routes never honour the header.
+Switchboard and Rendercase must use the same Cloudflare Access team so user
+subjects match.
 
 Available MCP tools:
 
