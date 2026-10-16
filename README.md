@@ -294,6 +294,18 @@ user assertions cannot delegate, and browser routes never honour the header.
 Switchboard and Rendercase must use the same Cloudflare Access team so user
 subjects match.
 
+An unattended workload with no person, such as a factory job, can publish as a
+service user. List its subject, for example `service:agent:factory`, in
+`RENDERCASE_SWITCHBOARD_SERVICE_SUBJECTS`, and configure Switchboard to send it
+with `forward_access_subject`. Rendercase accepts a listed subject only from
+Switchboard's service token. On first use it creates the subject as a service
+user, and that user is never an administrator. Startup fails if a listed subject
+starts with `cloudflare_access:`, is also an admin subject, or is configured
+outside Cloudflare Access mode. Service users see only artifacts they own or
+were granted. Other people's artifacts set to `authenticated` stay hidden from
+them. Their own artifacts can be set to `authenticated` for every signed-in
+person.
+
 Available MCP tools:
 
 - `rendercase_list`
@@ -374,6 +386,7 @@ are listed in [.env.example](.env.example). Optional controls include:
 | `RENDERCASE_OAUTH_SCOPE` | `rendercase:mcp` | Required MCP token scope |
 | `RENDERCASE_SWITCHBOARD_OAUTH_SUBJECT` | — | Switchboard service-client subject allowed to delegate an existing user |
 | `RENDERCASE_SWITCHBOARD_ACCESS_CLIENT_ID` | — | Switchboard Access service-token client ID allowed to delegate an existing user |
+| `RENDERCASE_SWITCHBOARD_SERVICE_SUBJECTS` | — | Comma-separated non-person subjects Switchboard may name; each acts as its own never-admin service user |
 | `RENDERCASE_MAX_BUNDLE_BYTES` | `26214400` | ZIP and expanded bundle limit |
 | `RENDERCASE_MAX_FILES` | `500` | Maximum files per bundle |
 | `RENDERCASE_UPLOAD_TTL` | `15m` | Upload session lifetime |

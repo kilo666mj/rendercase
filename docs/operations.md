@@ -109,6 +109,10 @@ taking another backup and confirming the matching objects still exist.
   credential and Rendercase as one change. The old subject or client ID must no
   longer be able to delegate, so remove a rotated Access service token from the
   Rendercase Access policy too.
+- Removing a subject from `RENDERCASE_SWITCHBOARD_SERVICE_SUBJECTS` stops
+  Switchboard acting as it once Rendercase restarts. Its service user and
+  artifacts remain; delete the artifacts through the administrator API if
+  needed.
 - Revoke capability shares through the owner or administrator API; do not try
   to recover their plaintext tokens from PostgreSQL because only hashes are
   stored.
