@@ -95,7 +95,23 @@ class BuildFilmTest(unittest.TestCase):
     def test_comment_markers_inside_strings_are_not_comments(self):
         src = "const a = 'not // a comment', c = \"/* nor this */\";\nkit.type('list', (d) => ({}));\n"
         self.assertEqual(b.registered_types({"shared.js": self._write(src)}), {"list"})
-        self.assertEqual(b.strip_js_comments("a // x\nb /* y */ c"), "a \nb   c")
+        self.assertEqual(b.split_js("a // x\nb /* y */ c 'z'"), ("a \nb   c \x000\x00", ["z"]))
+
+    def test_kit_type_text_inside_strings_is_not_a_registration(self):
+        for src in ("const example = \"kit.type('code', makeCode)\";\n",
+                    "const doc = `call kit.type(\"code\", make) to override`;\n",
+                    "mykit.type('code', make);\n"):
+            with self.subTest(src=src):
+                self.assertEqual(b.registered_types({"shared.js": self._write(src)}), set())
+        self.assertEqual(b.registered_types({"shared.js": self._write("kit.type( \"code\" , make);")}), {"code"})
+
+    def test_string_mention_keeps_code_scene_typing_duration(self):
+        typed = "x" * 600
+        (self.film / "shared.js").write_text("const example = \"kit.type('code', makeCode)\";\n")
+        self.manifest(lambda m: m["scenes"][3]["data"].update(typed=typed))
+        self.build()
+        scenes = json.loads((self.tmp / "out" / "film-data.js").read_text()[len("window.__FILM__ = "):-2])["manifest"]["scenes"]
+        self.assertGreaterEqual(scenes[3]["dur"], b.TYPE_AT + len(typed) / b.TYPE_CPS + 2.5 - 0.05)
 
     def _write(self, src):
         path = self.tmp / "shared.js"

@@ -131,44 +131,51 @@ def inventory(film):
     return files
 
 
-def strip_js_comments(src):
-    # Drops // and /* */ comments but keeps string contents, so "https://…" survives.
-    # shortcut: regex literals are not recognised; a quote or // inside one can confuse this.
-    out, i, quote = [], 0, None
+def split_js(src):
+    """Separate JavaScript code from its comments and string literals.
+
+    Returns the code with comments removed and each string literal replaced by a
+    numbered placeholder, plus the literals' contents, so code-only patterns never
+    match text inside strings or comments.
+    """
+    # shortcut: regex literals and ${} inside template literals are not parsed; a quote,
+    # // or /* inside one can confuse this. A missed registration only keeps stock checks on.
+    code, strings, i = [], [], 0
     while i < len(src):
         c = src[i]
-        if quote:
-            out.append(c)
-            if c == "\\" and i + 1 < len(src):
-                out.append(src[i + 1])
-                i += 1
-            elif c == quote:
-                quote = None
-        elif c in "'\"`":
-            quote = c
-            out.append(c)
+        if c in "'\"`":
+            j, text = i + 1, []
+            while j < len(src) and src[j] != c:
+                if src[j] == "\\" and j + 1 < len(src):
+                    text.append(src[j:j + 2])
+                    j += 2
+                    continue
+                text.append(src[j])
+                j += 1
+            code.append(f"\0{len(strings)}\0")
+            strings.append("".join(text))
+            i = j + 1
         elif src.startswith("//", i):
             end = src.find("\n", i)
             i = len(src) if end < 0 else end
-            continue
         elif src.startswith("/*", i):
             end = src.find("*/", i + 2)
             i = len(src) if end < 0 else end + 2
-            out.append(" ")
-            continue
+            code.append(" ")
         else:
-            out.append(c)
-        i += 1
-    return "".join(out)
+            code.append(c)
+            i += 1
+    return "".join(code), strings
 
 
 def registered_types(files):
     # kit.type("name", ...) in shared.js replaces a stock type of that name, as the player does.
-    # Commented-out registrations don't count.
+    # Only real calls count: not text inside comments or string literals.
     if "shared.js" not in files:
         return set()
-    src = strip_js_comments(files["shared.js"].read_text(encoding="utf-8"))
-    return set(re.findall(r"""kit\.type\(\s*["'`]([A-Za-z0-9_-]+)["'`]""", src))
+    code, strings = split_js(files["shared.js"].read_text(encoding="utf-8"))
+    names = (strings[int(n)] for n in re.findall(r"(?<![\w.$])kit\.type\(\s*\0(\d+)\0", code))
+    return {n for n in names if re.fullmatch(r"[A-Za-z0-9_-]+", n)}
 
 
 def validate(m, files):
