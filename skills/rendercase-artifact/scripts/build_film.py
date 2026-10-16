@@ -131,11 +131,43 @@ def inventory(film):
     return files
 
 
+def strip_js_comments(src):
+    # Drops // and /* */ comments but keeps string contents, so "https://…" survives.
+    # shortcut: regex literals are not recognised; a quote or // inside one can confuse this.
+    out, i, quote = [], 0, None
+    while i < len(src):
+        c = src[i]
+        if quote:
+            out.append(c)
+            if c == "\\" and i + 1 < len(src):
+                out.append(src[i + 1])
+                i += 1
+            elif c == quote:
+                quote = None
+        elif c in "'\"`":
+            quote = c
+            out.append(c)
+        elif src.startswith("//", i):
+            end = src.find("\n", i)
+            i = len(src) if end < 0 else end
+            continue
+        elif src.startswith("/*", i):
+            end = src.find("*/", i + 2)
+            i = len(src) if end < 0 else end + 2
+            out.append(" ")
+            continue
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def registered_types(files):
     # kit.type("name", ...) in shared.js replaces a stock type of that name, as the player does.
+    # Commented-out registrations don't count.
     if "shared.js" not in files:
         return set()
-    src = files["shared.js"].read_text(encoding="utf-8")
+    src = strip_js_comments(files["shared.js"].read_text(encoding="utf-8"))
     return set(re.findall(r"""kit\.type\(\s*["'`]([A-Za-z0-9_-]+)["'`]""", src))
 
 

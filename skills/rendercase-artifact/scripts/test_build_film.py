@@ -81,6 +81,27 @@ class BuildFilmTest(unittest.TestCase):
         (self.film / "shared.js").write_text("kit.type('list', (d) => ({ init() {}, render() {} }));\n")
         self.build()
 
+    def test_commented_out_override_keeps_stock_rules(self):
+        self.manifest(lambda m: m["scenes"][2]["data"].update(icon="star"))
+        for src in ("// kit.type('list', (d) => ({}));\n",
+                    "/* kit.type(\"list\", (d) => ({})); */\n",
+                    "/*\n * kit.type(`list`, (d) => ({}));\n */\n",
+                    "const url = 'https://example.com/'; // kit.type('list', (d) => ({}));\n"):
+            with self.subTest(src=src):
+                (self.film / "shared.js").write_text(src)
+                with self.assertRaises(b.Invalid):
+                    b.build(self.film, self.tmp / "out")
+
+    def test_comment_markers_inside_strings_are_not_comments(self):
+        src = "const a = 'not // a comment', c = \"/* nor this */\";\nkit.type('list', (d) => ({}));\n"
+        self.assertEqual(b.registered_types({"shared.js": self._write(src)}), {"list"})
+        self.assertEqual(b.strip_js_comments("a // x\nb /* y */ c"), "a \nb   c")
+
+    def _write(self, src):
+        path = self.tmp / "shared.js"
+        path.write_text(src)
+        return path
+
     def test_zip_name_appends_to_dotted_output(self):
         zip_path, _ = b.build(self.film, self.tmp / "recap-10.12")
         self.assertEqual(zip_path.name, "recap-10.12.zip")
