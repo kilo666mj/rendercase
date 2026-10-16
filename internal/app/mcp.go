@@ -178,24 +178,84 @@ func scopeClaim(value any) []string {
 
 type listInput struct{}
 type listOutput struct {
-	Artifacts []store.Artifact `json:"artifacts"`
+	Artifacts []mcpArtifact `json:"artifacts"`
 }
+
+// MCP results use snake_case keys like the REST API's top level. The store types
+// stay untagged because REST responses and the browser read their Go field names.
+type mcpArtifact struct {
+	ID            string    `json:"id"`
+	OwnerID       string    `json:"owner_id"`
+	Slug          string    `json:"slug"`
+	Title         string    `json:"title"`
+	Visibility    string    `json:"visibility"`
+	LatestVersion int       `json:"latest_version"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	Role          string    `json:"role"`
+}
+
+func artifactForMCP(a store.Artifact) mcpArtifact {
+	return mcpArtifact{ID: a.ID, OwnerID: a.OwnerID, Slug: a.Slug, Title: a.Title, Visibility: a.Visibility,
+		LatestVersion: a.LatestVersion, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt, Role: a.Role}
+}
+
+type mcpShare struct {
+	ID         string     `json:"id"`
+	ArtifactID string     `json:"artifact_id"`
+	CreatedBy  string     `json:"created_by"`
+	Version    *int       `json:"version"`
+	ExpiresAt  *time.Time `json:"expires_at"`
+	ViewLimit  *int       `json:"view_limit"`
+	ViewCount  int        `json:"view_count"`
+	RevokedAt  *time.Time `json:"revoked_at"`
+}
+
+type mcpAdminArtifact struct {
+	mcpArtifact
+	OwnerEmail       string     `json:"owner_email"`
+	OwnerDisplayName string     `json:"owner_display_name"`
+	Shares           []mcpShare `json:"shares"`
+}
+
+func adminListForMCP(artifacts []store.AdminArtifact) adminListOutput {
+	out := adminListOutput{Artifacts: make([]mcpAdminArtifact, 0, len(artifacts))}
+	for _, a := range artifacts {
+		out.Artifacts = append(out.Artifacts, adminArtifactForMCP(a))
+	}
+	return out
+}
+
+func adminArtifactForMCP(a store.AdminArtifact) mcpAdminArtifact {
+	out := mcpAdminArtifact{mcpArtifact: artifactForMCP(a.Artifact), OwnerEmail: a.OwnerEmail, OwnerDisplayName: a.OwnerDisplayName, Shares: []mcpShare{}}
+	for _, sh := range a.Shares {
+		out.Shares = append(out.Shares, mcpShare{ID: sh.ID, ArtifactID: sh.ArtifactID, CreatedBy: sh.CreatedBy, Version: sh.Version,
+			ExpiresAt: sh.ExpiresAt, ViewLimit: sh.ViewLimit, ViewCount: sh.ViewCount, RevokedAt: sh.RevokedAt})
+	}
+	return out
+}
+
 type getInput struct {
 	ArtifactID string `json:"artifact_id" jsonschema:"required"`
 	Version    int    `json:"version,omitempty"`
 }
 type getOutput struct {
-	Artifact store.Artifact `json:"artifact"`
-	Version  mcpVersion     `json:"version"`
-	URL      string         `json:"url"`
+	Artifact mcpArtifact `json:"artifact"`
+	Version  mcpVersion  `json:"version"`
+	URL      string      `json:"url"`
 }
 type mcpVersion struct {
-	ArtifactID, Title, Entrypoint, ObjectDir, ManifestSHA256 string
-	Version, FileCount                                       int
-	ByteSize                                                 int64
-	Manifest                                                 map[string]any
-	CreatedBy                                                string
-	CreatedAt                                                time.Time
+	ArtifactID     string         `json:"artifact_id"`
+	Title          string         `json:"title"`
+	Entrypoint     string         `json:"entrypoint"`
+	ObjectDir      string         `json:"object_dir"`
+	ManifestSHA256 string         `json:"manifest_sha256"`
+	Version        int            `json:"version"`
+	FileCount      int            `json:"file_count"`
+	ByteSize       int64          `json:"byte_size"`
+	Manifest       map[string]any `json:"manifest"`
+	CreatedBy      string         `json:"created_by"`
+	CreatedAt      time.Time      `json:"created_at"`
 }
 type createUploadInput struct {
 	Title      string `json:"title" jsonschema:"required,artifact title"`
@@ -203,17 +263,19 @@ type createUploadInput struct {
 	ArtifactID string `json:"artifact_id,omitempty"`
 }
 type createUploadOutput struct {
-	UploadID, UploadToken, UploadURL string
-	ExpiresAt                        time.Time `json:"expires_at"`
+	UploadID    string    `json:"upload_id"`
+	UploadToken string    `json:"upload_token"`
+	UploadURL   string    `json:"upload_url"`
+	ExpiresAt   time.Time `json:"expires_at"`
 }
 type commitInput struct {
 	UploadID    string `json:"upload_id" jsonschema:"required"`
 	UploadToken string `json:"upload_token" jsonschema:"required"`
 }
 type commitOutput struct {
-	Artifact store.Artifact `json:"artifact"`
-	Version  mcpVersion     `json:"version"`
-	URL      string         `json:"url"`
+	Artifact mcpArtifact `json:"artifact"`
+	Version  mcpVersion  `json:"version"`
+	URL      string      `json:"url"`
 }
 type publishInput struct {
 	Title        string `json:"title" jsonschema:"required,artifact title"`
@@ -227,7 +289,10 @@ type shareInput struct {
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	ViewLimit  *int       `json:"view_limit,omitempty"`
 }
-type shareOutput struct{ ShareID, URL string }
+type shareOutput struct {
+	ShareID string `json:"share_id"`
+	URL     string `json:"url"`
+}
 type revokeShareInput struct {
 	ShareID string `json:"share_id" jsonschema:"required"`
 }
@@ -239,7 +304,7 @@ type visibilityInput struct {
 	Visibility string `json:"visibility" jsonschema:"required,private or authenticated"`
 }
 type adminListOutput struct {
-	Artifacts []store.AdminArtifact `json:"artifacts"`
+	Artifacts []mcpAdminArtifact `json:"artifacts"`
 }
 type adminDeleteArtifactInput struct {
 	ArtifactID string `json:"artifact_id" jsonschema:"required"`
@@ -310,7 +375,10 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		if err != nil {
 			return nil, listOutput{}, err
 		}
-		out := listOutput{Artifacts: artifacts}
+		out := listOutput{Artifacts: make([]mcpArtifact, 0, len(artifacts))}
+		for _, a := range artifacts {
+			out.Artifacts = append(out.Artifacts, artifactForMCP(a))
+		}
 		return textResult(fmt.Sprintf("Found %d artifacts.", len(artifacts))), out, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_get", Description: "Get an accessible artifact and one immutable version. Version 0 selects the latest.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in getInput) (*mcp.CallToolResult, getOutput, error) {
@@ -329,7 +397,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		if err != nil {
 			return nil, getOutput{}, err
 		}
-		out := getOutput{Artifact: a, Version: mcpV, URL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/a/" + a.ID}
+		out := getOutput{Artifact: artifactForMCP(a), Version: mcpV, URL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/a/" + a.ID}
 		return textResult("Found " + a.Title + " version " + strconv.Itoa(v.Version) + "."), out, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_create_upload", Description: "Create a short-lived upload URL for a ZIP bundle. Before authoring, call rendercase_get_branding and follow it unless the user or represented project supplies another design system. To update an existing artifact, set artifact_id to an artifact owned by the caller; committing creates its next immutable version. PUT the ZIP using X-Rendercase-Upload-Token, then call rendercase_commit_upload.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in createUploadInput) (*mcp.CallToolResult, createUploadOutput, error) {
@@ -373,7 +441,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		if err != nil {
 			return nil, commitOutput{}, err
 		}
-		out := commitOutput{Artifact: a, Version: mcpV, URL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/a/" + a.ID}
+		out := commitOutput{Artifact: artifactForMCP(a), Version: mcpV, URL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/a/" + a.ID}
 		return textResult("Published " + a.Title + " version " + strconv.Itoa(v.Version) + ": " + out.URL), out, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_publish", Description: "Create or update an artifact in one MCP call from a base64-encoded ZIP bundle. Before authoring, call rendercase_get_branding and follow it unless the user or represented project supplies another design system. Set artifact_id to an artifact owned by the caller to create its next immutable version.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in publishInput) (*mcp.CallToolResult, commitOutput, error) {
@@ -410,13 +478,13 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		out := shareOutput{ShareID: id, URL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/s/" + plain}
 		return textResult("Capability link created: " + out.URL), out, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_set_visibility", Description: "Set an owned artifact to private or make it visible to every authenticated Rendercase account.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in visibilityInput) (*mcp.CallToolResult, store.Artifact, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_set_visibility", Description: "Set an owned artifact to private or make it visible to every authenticated Rendercase account.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in visibilityInput) (*mcp.CallToolResult, mcpArtifact, error) {
 		a, err := s.db.SetArtifactVisibility(ctx, in.ArtifactID, user.ID, in.Visibility)
 		if err != nil {
-			return nil, store.Artifact{}, err
+			return nil, mcpArtifact{}, err
 		}
 		s.auditContext(ctx, user.ID, "", a.ID, "artifact.visibility.update", map[string]any{"visibility": a.Visibility, "interface": "mcp"})
-		return textResult("Artifact visibility set to " + a.Visibility + "."), a, nil
+		return textResult("Artifact visibility set to " + a.Visibility + "."), artifactForMCP(a), nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_revoke_share", Description: "Immediately revoke a capability share owned by the authenticated user.", Annotations: mcpkit.Destructive(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in revokeShareInput) (*mcp.CallToolResult, revokeShareOutput, error) {
 		artifactID, err := s.db.RevokeShare(ctx, in.ShareID, user.ID)
@@ -507,7 +575,7 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 			if err != nil {
 				return nil, adminListOutput{}, err
 			}
-			return textResult(fmt.Sprintf("Found %d active artifacts across all users.", len(artifacts))), adminListOutput{Artifacts: artifacts}, nil
+			return textResult(fmt.Sprintf("Found %d active artifacts across all users.", len(artifacts))), adminListForMCP(artifacts), nil
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_revoke_share", Description: "Revoke any capability share. Administrator access required; the action is audited.", Annotations: mcpkit.Destructive(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in revokeShareInput) (*mcp.CallToolResult, revokeShareOutput, error) {
 			artifactID, err := s.db.AdminRevokeShare(ctx, in.ShareID)
@@ -589,7 +657,7 @@ func (s *Server) publishBundleForUser(ctx context.Context, user store.User, in p
 	if err != nil {
 		return commitOutput{}, err
 	}
-	return commitOutput{Artifact: a, Version: mcpV, URL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/a/" + a.ID}, nil
+	return commitOutput{Artifact: artifactForMCP(a), Version: mcpV, URL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/a/" + a.ID}, nil
 }
 
 func versionForMCP(v store.Version) (mcpVersion, error) {

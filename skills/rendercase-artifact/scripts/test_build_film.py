@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -46,6 +47,50 @@ class BuildFilmTest(unittest.TestCase):
         self.build()
         scenes = json.loads((self.tmp / "out" / "film-data.js").read_text()[len("window.__FILM__ = "):-2])["manifest"]["scenes"]
         self.assertGreaterEqual(scenes[3]["dur"], b.TYPE_AT + len(typed) / b.TYPE_CPS + 2.5 - 0.05)
+
+    def test_stock_schema_covers_every_field_the_renderers_draw(self):
+        src = (b.PLAYER / "stock" / "scenes.js").read_text()
+        blocks = re.split(r'kit\.type\("', src)[1:]
+        self.assertEqual({blk.split('"', 1)[0] for blk in blocks}, set(b.STOCK))
+        for blk in blocks:
+            kind = blk.split('"', 1)[0]
+            drawn = set(re.findall(r"\bd\.([a-z]+)", blk))
+            if "headline(col, d" in blk:
+                drawn |= {"kicker", "title"}
+            if "tail(col, d)" in blk:
+                drawn |= {"sub", "tag"}
+            self.assertLessEqual(drawn, set(b.STOCK[kind][1]), kind)
+
+    def test_kicker_and_tag_on_every_headline_type(self):
+        self.manifest(lambda m: [m["scenes"][i]["data"].update(kicker="This week") for i in (2, 3, 4, 6)]
+                      and m["scenes"][6]["data"].update(tag="v1"))
+        self.build()
+
+    def test_code_duration_counts_utf16_like_the_player(self):
+        typed = "\U0001F600" * 150
+        self.manifest(lambda m: m["scenes"][3]["data"].update(typed=typed))
+        self.build()
+        scenes = json.loads((self.tmp / "out" / "film-data.js").read_text()[len("window.__FILM__ = "):-2])["manifest"]["scenes"]
+        self.assertGreaterEqual(scenes[3]["dur"], b.TYPE_AT + 300 / b.TYPE_CPS + 2.5 - 0.05)
+
+    def test_shared_js_type_replaces_stock_rules(self):
+        override = lambda m: m["scenes"][2]["data"].update(icon="star", items=[str(i) for i in range(10)])
+        self.manifest(override)
+        with self.assertRaises(b.Invalid):
+            self.build()
+        (self.film / "shared.js").write_text("kit.type('list', (d) => ({ init() {}, render() {} }));\n")
+        self.build()
+
+    def test_zip_name_appends_to_dotted_output(self):
+        zip_path, _ = b.build(self.film, self.tmp / "recap-10.12")
+        self.assertEqual(zip_path.name, "recap-10.12.zip")
+
+    def test_size_limit_applies_after_fonts_are_inlined(self):
+        (self.film / "fonts").mkdir()
+        (self.film / "fonts" / "Big-Rg.woff2").write_bytes(os.urandom(16 * 1024 * 1024))
+        with self.assertRaises(b.Invalid):
+            self.build()
+        self.assertFalse((self.tmp / "out").exists())
 
     def test_custom_scripts_are_scoped_and_fonts_inlined(self):
         for sid in ("a", "b"):

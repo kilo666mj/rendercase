@@ -27,12 +27,13 @@ STOCK = {
     "title": ({"title"}, {"kicker": "text", "title": "text", "subtitle": "text", "stats": "stats"}),
     "statement": ({"title"}, {"kicker": "text", "title": "text", "sub": "text", "tag": "text"}),
     "stat": ({"value", "label"}, {"kicker": "text", "value": "text", "label": "text", "detail": "text", "tag": "text"}),
-    "list": ({"title", "items"}, {"title": "text", "items": "items", "tag": "text"}),
-    "chips": ({"title", "chips"}, {"title": "text", "chips": "texts", "hot": "index", "sub": "text", "tag": "text"}),
-    "code": ({"title", "typed"}, {"title": "text", "sub": "text", "tag": "text", "file": "text",
+    "list": ({"title", "items"}, {"kicker": "text", "title": "text", "items": "items", "tag": "text"}),
+    "chips": ({"title", "chips"}, {"kicker": "text", "title": "text", "chips": "texts", "hot": "index",
+                                   "sub": "text", "tag": "text"}),
+    "code": ({"title", "typed"}, {"kicker": "text", "title": "text", "sub": "text", "tag": "text", "file": "text",
                                   "before": "raw", "typed": "text", "after": "raw"}),
     "quote": ({"text"}, {"text": "text", "attribution": "text"}),
-    "end": ({"title"}, {"title": "text", "sub": "text"}),
+    "end": ({"title"}, {"kicker": "text", "title": "text", "sub": "text", "tag": "text"}),
 }
 # Typing pace of the stock code scene; keep in step with TYPE_AT and TYPE_CPS in stock/scenes.js.
 TYPE_AT, TYPE_CPS = 0.9, 30
@@ -64,8 +65,13 @@ def reading_time(kind, data):
     t = min(14.0, max(5.0, 2.5 + words(data) / 3.0))
     if kind == "code":
         # Hold the finished code for a moment after the last character is typed.
-        t = max(t, TYPE_AT + len(data["typed"]) / TYPE_CPS + 2.5)
+        t = max(t, TYPE_AT + js_length(data["typed"]) / TYPE_CPS + 2.5)
     return round(t, 1)
+
+
+def js_length(text):
+    # JavaScript string length counts UTF-16 code units, so an emoji counts twice.
+    return len(text.encode("utf-16-le")) // 2
 
 
 def check_field(kind, v, where):
@@ -125,6 +131,14 @@ def inventory(film):
     return files
 
 
+def registered_types(files):
+    # kit.type("name", ...) in shared.js replaces a stock type of that name, as the player does.
+    if "shared.js" not in files:
+        return set()
+    src = files["shared.js"].read_text(encoding="utf-8")
+    return set(re.findall(r"""kit\.type\(\s*["'`]([A-Za-z0-9_-]+)["'`]""", src))
+
+
 def validate(m, files):
     if not isinstance(m, dict):
         raise Invalid("scenes.json: must be an object")
@@ -147,7 +161,7 @@ def validate(m, files):
     scenes = m.get("scenes")
     if not isinstance(scenes, list) or not 1 <= len(scenes) <= 60:
         raise Invalid("scenes: must be a list of 1 to 60 scenes")
-    seen, total = set(), 0.0
+    seen, total, custom = set(), 0.0, registered_types(files)
     for i, s in enumerate(scenes):
         where = f"scenes[{i}]"
         if not isinstance(s, dict):
@@ -164,7 +178,7 @@ def validate(m, files):
         if f"scene-{sid}.js" in files:
             if kind:
                 raise Invalid(f"{where}: has both a type and scene-{sid}.js")
-        elif kind in STOCK:
+        elif kind in STOCK and kind not in custom:
             required, fields = STOCK[kind]
             missing, unknown = required - data.keys(), data.keys() - fields.keys()
             if missing:
@@ -182,7 +196,7 @@ def validate(m, files):
         if "dur" not in s:
             if not kind:
                 raise Invalid(f"{where}.dur: required for a scene written in JavaScript")
-            s["dur"] = reading_time(kind, data)
+            s["dur"] = reading_time(None if kind in custom else kind, data)
         number(s["dur"], 0.5, 120, f"{where}.dur")
         total += s["dur"]
     if total > MAX_TOTAL:
@@ -198,7 +212,8 @@ def build(film, out):
     files = inventory(film)
     m = json.loads(files["scenes.json"].read_text(encoding="utf-8"))
     validate(m, files)
-    if out.exists() or out.with_suffix(".zip").exists():
+    zip_path = out.parent / (out.name + ".zip")
+    if out.exists() or zip_path.exists():
         raise Invalid(f"{out} or its .zip already exists; choose a new output directory")
     shutil.copytree(PLAYER, out, ignore=shutil.ignore_patterns("example"))
     (out / "film").mkdir()
@@ -232,7 +247,11 @@ def build(film, out):
     page = page.replace("<!--SCRIPTS-->", "\n".join(f'<script src="film/{s}"></script>' for s in scripts))
     (out / "index.html").write_text(page, encoding="utf-8")
 
-    zip_path = out.with_suffix(".zip")
+    # Inlined fonts grow by about a third, so check the size of what was built.
+    built = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
+    if built > MAX_BYTES:
+        shutil.rmtree(out)
+        raise Invalid(f"built film is {built / 1048576:.1f} MB; the limit is 20 MB (fonts grow when inlined)")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
         for p in sorted(out.rglob("*")):
             if p.is_file():
