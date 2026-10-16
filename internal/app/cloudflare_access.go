@@ -32,8 +32,9 @@ func (s *Server) cloudflareAccessUserFromJWT(ctx context.Context, raw string) (s
 // cloudflareAccessMCPUser authenticates an MCP request. Switchboard's Access
 // service token may act for an existing Rendercase user named in
 // X-Switchboard-Access-Subject as cloudflare_access:<sub>, the form Switchboard
-// forwards. Without the header it is limited to tool discovery and never acts
-// as a stored user. Every other caller acts as itself.
+// forwards, or as a configured non-person service subject. Without the header it
+// is limited to tool discovery and never acts as a stored user. Every other
+// caller acts as itself.
 func (s *Server) cloudflareAccessMCPUser(r *http.Request) (store.User, bool, error) {
 	claims, err := s.verifyCloudflareAccessClaims(r.Context(), r.Header.Get(cfAccessJWTHeader))
 	if err != nil {
@@ -62,12 +63,23 @@ func (s *Server) cloudflareAccessMCPUser(r *http.Request) (store.User, bool, err
 	if !delegated {
 		return store.User{Subject: "cloudflare_access:service_token:" + clientID, Username: "switchboard", DisplayName: "Switchboard"}, true, nil
 	}
+	if _, service := s.cfg.SwitchboardServiceSubjects[subject]; service {
+		user, err := s.serviceUser(r.Context(), subject)
+		return user, false, err
+	}
 	if !strings.HasPrefix(subject, "cloudflare_access:") || subject == "cloudflare_access:" ||
 		strings.HasPrefix(subject, "cloudflare_access:service_token:") {
 		return store.User{}, false, errors.New("invalid Switchboard delegated subject")
 	}
 	user, err := s.delegatedUser(r.Context(), subject)
 	return user, false, err
+}
+
+func (s *Server) serviceUser(ctx context.Context, subject string) (store.User, error) {
+	if s.serviceUserUpsert != nil {
+		return s.serviceUserUpsert(ctx, subject)
+	}
+	return s.db.UpsertServiceUser(ctx, subject, "Service: "+subject)
 }
 
 // cloudflareAccessServiceTokenClientID returns the client ID of a service-token

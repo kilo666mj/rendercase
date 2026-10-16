@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_at timestamptz NOT NULL DEFAULT now(),
     last_login_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_service boolean NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash bytea PRIMARY KEY,

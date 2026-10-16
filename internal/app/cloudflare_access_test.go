@@ -360,6 +360,31 @@ func TestRequireBearerCloudflareAccessSwitchboardDelegation(t *testing.T) {
 		})
 	}
 
+	// A configured non-person subject acts as its own never-admin service user.
+	s.cfg.SwitchboardServiceSubjects = map[string]struct{}{"service:agent:factory": {}}
+	s.serviceUserUpsert = func(_ context.Context, subject string) (store.User, error) {
+		return store.User{ID: "service:" + subject, Subject: subject}, nil
+	}
+	if user, code := serve(serviceToken(switchboardClientID), "service:agent:factory"); code != http.StatusNoContent || user.ID != "service:service:agent:factory" || user.Admin {
+		t.Fatalf("service user = %+v, status = %d", user, code)
+	}
+	for name, test := range map[string]struct {
+		assertion string
+		delegated []string
+	}{
+		"unlisted service subject":            {serviceToken(switchboardClientID), []string{"service:agent:other"}},
+		"listed subject from other token":     {serviceToken("other.access"), []string{"service:agent:factory"}},
+		"listed subject from a person":        {userToken, []string{"service:agent:factory"}},
+		"listed subject with another subject": {serviceToken(switchboardClientID), []string{"service:agent:factory", "cloudflare_access:alice-subject"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if user, code := serve(test.assertion, test.delegated...); code != http.StatusUnauthorized {
+				t.Fatalf("user = %+v, status = %d", user, code)
+			}
+		})
+	}
+	s.cfg.SwitchboardServiceSubjects = nil
+
 	request := httptest.NewRequest(http.MethodPost, publicURL.JoinPath("mcp").String(), nil)
 	request.Header.Set(cfAccessJWTHeader, serviceToken(switchboardClientID))
 	s.requireBearer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {

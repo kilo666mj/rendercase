@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -50,6 +51,9 @@ type Config struct {
 
 	SwitchboardOAuthSubject   string
 	SwitchboardAccessClientID string
+	// SwitchboardServiceSubjects are non-person subjects Switchboard may name;
+	// each acts as its own never-admin service user.
+	SwitchboardServiceSubjects map[string]struct{}
 }
 
 const (
@@ -160,6 +164,8 @@ func Load() (Config, error) {
 
 		SwitchboardOAuthSubject:   strings.TrimSpace(os.Getenv("RENDERCASE_SWITCHBOARD_OAUTH_SUBJECT")),
 		SwitchboardAccessClientID: strings.TrimSpace(os.Getenv("RENDERCASE_SWITCHBOARD_ACCESS_CLIENT_ID")),
+
+		SwitchboardServiceSubjects: csvSet(os.Getenv("RENDERCASE_SWITCHBOARD_SERVICE_SUBJECTS")),
 	}
 	cfg.OAuthAudiences = csv(os.Getenv("RENDERCASE_OAUTH_AUDIENCES"))
 	if len(cfg.OAuthAudiences) == 0 {
@@ -200,10 +206,34 @@ func Load() (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("RENDERCASE_AUTH_MODE must be %q or %q", AuthModeOIDC, AuthModeCloudflareAccess)
 	}
+	if err := validateServiceSubjects(cfg); err != nil {
+		return Config{}, err
+	}
 	if cfg.MaxBundleBytes <= 0 || cfg.MaxFiles <= 0 || cfg.MaintenanceInterval <= 0 || cfg.AuditRetention <= 0 {
 		return Config{}, errors.New("bundle and maintenance limits must be positive")
 	}
 	return cfg, nil
+}
+
+var validServiceSubject = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:@-]{0,254}$`)
+
+func validateServiceSubjects(cfg Config) error {
+	if len(cfg.SwitchboardServiceSubjects) == 0 {
+		return nil
+	}
+	if cfg.AuthMode != AuthModeCloudflareAccess || cfg.SwitchboardAccessClientID == "" {
+		return errors.New("RENDERCASE_SWITCHBOARD_SERVICE_SUBJECTS requires cloudflare_access auth mode and RENDERCASE_SWITCHBOARD_ACCESS_CLIENT_ID")
+	}
+	for subject := range cfg.SwitchboardServiceSubjects {
+		// Service subjects must never be mistaken for a Cloudflare Access person or service token.
+		if !validServiceSubject.MatchString(subject) || strings.HasPrefix(subject, "cloudflare_access:") {
+			return fmt.Errorf("invalid Switchboard service subject %q", subject)
+		}
+		if _, admin := cfg.AdminSubjects[subject]; admin {
+			return fmt.Errorf("switchboard service subject %q cannot be an admin subject", subject)
+		}
+	}
+	return nil
 }
 
 func validateCFAccess(teamDomain, audience string) error {

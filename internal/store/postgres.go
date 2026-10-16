@@ -16,10 +16,11 @@ import (
 var schemaSQL string
 
 var (
-	ErrNotFound          = errors.New("not found")
-	ErrInvalidVisibility = errors.New("visibility must be private or authenticated")
-	ErrThemeLimit        = errors.New("branding theme limit reached")
-	ErrActiveTheme       = errors.New("active branding theme cannot be deleted")
+	ErrNotFound               = errors.New("not found")
+	ErrServiceSubjectConflict = errors.New("service subject belongs to a person")
+	ErrInvalidVisibility      = errors.New("visibility must be private or authenticated")
+	ErrThemeLimit             = errors.New("branding theme limit reached")
+	ErrActiveTheme            = errors.New("active branding theme cannot be deleted")
 )
 
 const MaxBrandingThemes = 50
@@ -324,6 +325,23 @@ func (d *DB) UpsertUser(ctx context.Context, subject, username, email, displayNa
 	return u, err
 }
 
+// UpsertServiceUser creates or refreshes a non-person service user. It is never
+// an admin, and an existing person with the same subject is never converted.
+func (d *DB) UpsertServiceUser(ctx context.Context, subject, displayName string) (User, error) {
+	var u User
+	err := d.Pool.QueryRow(ctx, `
+		INSERT INTO users (id, oidc_subject, username, display_name, is_admin, is_service)
+		VALUES ('u_' || gen_random_uuid()::text, $1, $1, $2, false, true)
+		ON CONFLICT (oidc_subject) DO UPDATE SET display_name=EXCLUDED.display_name, is_admin=false, last_login_at=now()
+		WHERE users.is_service
+		RETURNING id, oidc_subject, username, email, display_name, is_admin`,
+		subject, displayName).Scan(&u.ID, &u.Subject, &u.Username, &u.Email, &u.DisplayName, &u.Admin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrServiceSubjectConflict
+	}
+	return u, err
+}
+
 func (d *DB) UserBySubject(ctx context.Context, subject string) (User, error) {
 	var u User
 	err := d.Pool.QueryRow(ctx, `SELECT id,oidc_subject,username,email,display_name,is_admin FROM users WHERE oidc_subject=$1`, subject).
@@ -366,7 +384,7 @@ func (d *DB) ListArtifacts(ctx context.Context, userID string) ([]Artifact, erro
 	rows, err := d.Pool.Query(ctx, `SELECT a.id,a.owner_id,a.slug,a.title,a.visibility,a.latest_version,a.created_at,a.updated_at,
 		CASE WHEN a.owner_id=$1 THEN 'owner' ELSE COALESCE(g.role,'viewer') END
 		FROM artifacts a LEFT JOIN artifact_grants g ON g.artifact_id=a.id AND g.user_id=$1
-		WHERE a.deleted_at IS NULL AND (a.owner_id=$1 OR g.user_id IS NOT NULL OR a.visibility='authenticated') ORDER BY a.updated_at DESC`, userID)
+		WHERE a.deleted_at IS NULL AND (a.owner_id=$1 OR g.user_id IS NOT NULL OR (a.visibility='authenticated' AND NOT EXISTS (SELECT 1 FROM users su WHERE su.id=$1 AND su.is_service))) ORDER BY a.updated_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +405,7 @@ func (d *DB) ArtifactForUser(ctx context.Context, artifactID, userID string) (Ar
 	err := d.Pool.QueryRow(ctx, `SELECT a.id,a.owner_id,a.slug,a.title,a.visibility,a.latest_version,a.created_at,a.updated_at,
 		CASE WHEN a.owner_id=$2 THEN 'owner' ELSE COALESCE(g.role,'viewer') END FROM artifacts a
 		LEFT JOIN artifact_grants g ON g.artifact_id=a.id AND g.user_id=$2
-		WHERE a.id=$1 AND a.deleted_at IS NULL AND (a.owner_id=$2 OR g.user_id IS NOT NULL OR a.visibility='authenticated')`, artifactID, userID).
+		WHERE a.id=$1 AND a.deleted_at IS NULL AND (a.owner_id=$2 OR g.user_id IS NOT NULL OR (a.visibility='authenticated' AND NOT EXISTS (SELECT 1 FROM users su WHERE su.id=$2 AND su.is_service)))`, artifactID, userID).
 		Scan(&a.ID, &a.OwnerID, &a.Slug, &a.Title, &a.Visibility, &a.LatestVersion, &a.CreatedAt, &a.UpdatedAt, &a.Role)
 	return a, translate(err)
 }
