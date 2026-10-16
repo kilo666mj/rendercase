@@ -1,0 +1,26 @@
+{
+  "title": "Example Project: week of Oct 12",
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "background": "#14161f",
+  "palette": ["#14161f", "#4f8cff", "#f4f6fb", "#ffb547"],
+  "music": { "tempo": 108, "key": "D", "mode": "major" },
+  "scenes": [
+    { "id": "title", "name": "Week of Oct 12", "type": "title",
+      "data": { "kicker": "Weekly recap", "title": "Week of Oct 12",
+                "stats": [{ "value": "82", "label": "tickets closed" }, { "value": "405", "label": "PRs merged" }, { "value": "30", "label": "repos touched" }] } },
+    { "id": "uploads", "name": "Faster uploads", "type": "stat",
+      "data": { "kicker": "Performance", "value": "41", "label": "queries for one page, now 2", "detail": "An N+1 in the listing endpoint is gone.", "tag": "EX-4821" } },
+    { "id": "shipped", "name": "What shipped", "type": "list",
+      "data": { "title": "What shipped", "items": [{ "name": "Resumable uploads", "desc": "Large bundles survive a dropped connection" }, { "name": "View-limited shares", "desc": "Links can expire after N views", "hot": true }, "A troubleshooting guide"] } },
+    { "id": "status", "name": "Status field", "type": "code",
+      "data": { "title": "Clients can see job status", "sub": "On the REST API and the job.updated webhook.", "file": "job.updated", "before": "{ …\n  \"status\": ", "typed": "\"ready\"", "after": "\n}" } },
+    { "id": "states", "name": "Job states", "type": "chips",
+      "data": { "title": "Five states, one field", "chips": ["queued", "running", "ready", "failed", "cancelled"], "hot": 2 } },
+    { "id": "quote", "name": "From a user", "type": "quote",
+      "data": { "text": "Publishing went from minutes to seconds.", "attribution": "An early user" } },
+    { "id": "end", "name": "Thanks", "type": "end", "dur": 6,
+      "data": { "title": "Thanks, team", "sub": "Questions or corrections: reply in the thread." } }
+  ]
+}

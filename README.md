@@ -317,7 +317,9 @@ Available MCP tools:
 
 The repository includes a Codex skill for creating responsive HTML artifacts,
 choosing suitable diagram and table forms, validating bundles for accidental
-secrets, and publishing directly through the Rendercase MCP.
+secrets, and publishing directly through the Rendercase MCP. It also bundles a
+film player for animated, scored artifacts such as weekly recaps; see
+[`references/film.md`](skills/rendercase-artifact/references/film.md).
 
 Ask Codex:
 
