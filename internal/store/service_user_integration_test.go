@@ -21,11 +21,11 @@ func TestServiceUserVisibilityIntegration(t *testing.T) {
 		return u
 	}
 	owner, reader := person("cloudflare_access:owner"), person("cloudflare_access:reader")
-	service, err := db.UpsertServiceUser(ctx, "service:agent:factory", "Service: factory")
+	service, err := db.UpsertServiceUser(ctx, "service:example:publisher", "Service: publisher")
 	if err != nil || service.Admin {
 		t.Fatalf("service user = %+v, %v", service, err)
 	}
-	if again, err := db.UpsertServiceUser(ctx, "service:agent:factory", "Service: factory"); err != nil || again.ID != service.ID {
+	if again, err := db.UpsertServiceUser(ctx, "service:example:publisher", "Service: publisher"); err != nil || again.ID != service.ID {
 		t.Fatalf("service user refresh = %+v, %v", again, err)
 	}
 	if _, err := db.UpsertServiceUser(ctx, reader.Subject, "hijack"); !errors.Is(err, store.ErrServiceSubjectConflict) {

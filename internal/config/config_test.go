@@ -177,19 +177,19 @@ func TestLoadSwitchboardServiceSubjects(t *testing.T) {
 	t.Setenv("RENDERCASE_CF_ACCESS_TEAM_DOMAIN", "https://example.cloudflareaccess.com")
 	t.Setenv("RENDERCASE_CF_ACCESS_AUD", "access-audience")
 	t.Setenv("RENDERCASE_SWITCHBOARD_ACCESS_CLIENT_ID", "switchboard.access")
-	t.Setenv("RENDERCASE_SWITCHBOARD_SERVICE_SUBJECTS", "service:agent:factory")
+	t.Setenv("RENDERCASE_SWITCHBOARD_SERVICE_SUBJECTS", "service:example:publisher")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := cfg.SwitchboardServiceSubjects["service:agent:factory"]; !ok {
+	if _, ok := cfg.SwitchboardServiceSubjects["service:example:publisher"]; !ok {
 		t.Fatalf("service subjects = %v", cfg.SwitchboardServiceSubjects)
 	}
 	for name, env := range map[string]map[string]string{
 		"person subject": {"RENDERCASE_SWITCHBOARD_SERVICE_SUBJECTS": "cloudflare_access:alice"},
 		"service token":  {"RENDERCASE_SWITCHBOARD_SERVICE_SUBJECTS": "cloudflare_access:service_token:x.access"},
 		"unsafe":         {"RENDERCASE_SWITCHBOARD_SERVICE_SUBJECTS": "service agent"},
-		"admin subject":  {"RENDERCASE_ADMIN_SUBJECTS": "service:agent:factory"},
+		"admin subject":  {"RENDERCASE_ADMIN_SUBJECTS": "service:example:publisher"},
 		"no switchboard": {"RENDERCASE_SWITCHBOARD_ACCESS_CLIENT_ID": ""},
 		"oidc auth mode": {"RENDERCASE_AUTH_MODE": AuthModeOIDC, "RENDERCASE_OIDC_CLIENT_ID": "rendercase", "RENDERCASE_OIDC_REDIRECT_URL": "https://rendercase.example.com/auth/callback"},
 	} {
