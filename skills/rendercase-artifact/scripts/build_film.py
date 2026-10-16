@@ -22,17 +22,20 @@ MODULE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*\.html$")
 FONT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*\.(otf|ttf|woff|woff2)$")
 FONT_TYPES = {".otf": "font/otf", ".ttf": "font/ttf", ".woff": "font/woff", ".woff2": "font/woff2"}
 FIXED = {"scenes.json", "base.css", "shared.js", "score.js"}
-# Required data fields of the stock scene types in stock/scenes.js.
+# Data fields of the stock scene types in stock/scenes.js: (required, {field: kind}).
 STOCK = {
-    "title": {"title"},
-    "statement": {"title"},
-    "stat": {"value", "label"},
-    "list": {"title", "items"},
-    "chips": {"title", "chips"},
-    "code": {"title", "typed"},
-    "quote": {"text"},
-    "end": {"title"},
+    "title": ({"title"}, {"kicker": "text", "title": "text", "subtitle": "text", "stats": "stats"}),
+    "statement": ({"title"}, {"kicker": "text", "title": "text", "sub": "text", "tag": "text"}),
+    "stat": ({"value", "label"}, {"kicker": "text", "value": "text", "label": "text", "detail": "text", "tag": "text"}),
+    "list": ({"title", "items"}, {"title": "text", "items": "items", "tag": "text"}),
+    "chips": ({"title", "chips"}, {"title": "text", "chips": "texts", "hot": "index", "sub": "text", "tag": "text"}),
+    "code": ({"title", "typed"}, {"title": "text", "sub": "text", "tag": "text", "file": "text",
+                                  "before": "raw", "typed": "text", "after": "raw"}),
+    "quote": ({"text"}, {"text": "text", "attribution": "text"}),
+    "end": ({"title"}, {"title": "text", "sub": "text"}),
 }
+# Typing pace of the stock code scene; keep in step with TYPE_AT and TYPE_CPS in stock/scenes.js.
+TYPE_AT, TYPE_CPS = 0.9, 30
 MAX_TOTAL = 600
 MAX_BYTES = 20 * 1024 * 1024
 
@@ -56,9 +59,47 @@ def words(v):
     return 0
 
 
-def reading_time(data):
+def reading_time(kind, data):
     # Every entrance lands by about 1.5 s; then allow a calm 3 words a second.
-    return round(min(14.0, max(5.0, 2.5 + words(data) / 3.0)), 1)
+    t = min(14.0, max(5.0, 2.5 + words(data) / 3.0))
+    if kind == "code":
+        # Hold the finished code for a moment after the last character is typed.
+        t = max(t, TYPE_AT + len(data["typed"]) / TYPE_CPS + 2.5)
+    return round(t, 1)
+
+
+def check_field(kind, v, where):
+    def text(x, w):
+        if not isinstance(x, str) or not x.strip():
+            raise Invalid(f"{w}: must be a non-empty string")
+    if kind == "text":
+        text(v, where)
+    elif kind == "raw":
+        if not isinstance(v, str):
+            raise Invalid(f"{where}: must be a string")
+    elif kind == "index":
+        if not isinstance(v, int) or isinstance(v, bool) or v < 0:
+            raise Invalid(f"{where}: must be a whole number from 0")
+    else:
+        limit = {"texts": 12, "items": 8, "stats": 4}[kind]
+        if not isinstance(v, list) or not 1 <= len(v) <= limit:
+            raise Invalid(f"{where}: must be a list of 1 to {limit} entries")
+        for i, x in enumerate(v):
+            w = f"{where}[{i}]"
+            if kind == "texts" or (kind == "items" and isinstance(x, str)):
+                text(x, w)
+                continue
+            fields = {"name": "text", "desc": "text", "hot": "bool"} if kind == "items" else {"value": "text", "label": "text"}
+            required = {"name"} if kind == "items" else {"value", "label"}
+            if not isinstance(x, dict) or required - x.keys() or x.keys() - fields.keys():
+                raise Invalid(f"{w}: must be an object with {', '.join(sorted(required))}"
+                              f" and optionally {', '.join(sorted(fields.keys() - required)) or 'nothing else'}")
+            for k, val in x.items():
+                if fields[k] == "bool":
+                    if not isinstance(val, bool):
+                        raise Invalid(f"{w}.{k}: must be true or false")
+                else:
+                    text(val, f"{w}.{k}")
 
 
 def inventory(film):
@@ -124,9 +165,16 @@ def validate(m, files):
             if kind:
                 raise Invalid(f"{where}: has both a type and scene-{sid}.js")
         elif kind in STOCK:
-            missing = STOCK[kind] - data.keys()
+            required, fields = STOCK[kind]
+            missing, unknown = required - data.keys(), data.keys() - fields.keys()
             if missing:
                 raise Invalid(f"{where}.data: {kind} needs {', '.join(sorted(missing))}")
+            if unknown:
+                raise Invalid(f"{where}.data: {kind} has no field {', '.join(sorted(unknown))}")
+            for k, v in data.items():
+                check_field(fields[k], v, f"{where}.data.{k}")
+            if kind == "chips" and data.get("hot", 0) >= len(data["chips"]):
+                raise Invalid(f"{where}.data.hot: must index one of the chips")
         elif kind and "shared.js" in files:
             pass  # a custom type registered with kit.type in shared.js; checked when the film loads
         else:
@@ -134,7 +182,7 @@ def validate(m, files):
         if "dur" not in s:
             if not kind:
                 raise Invalid(f"{where}.dur: required for a scene written in JavaScript")
-            s["dur"] = reading_time(data)
+            s["dur"] = reading_time(kind, data)
         number(s["dur"], 0.5, 120, f"{where}.dur")
         total += s["dur"]
     if total > MAX_TOTAL:

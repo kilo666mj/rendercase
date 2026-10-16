@@ -3,6 +3,7 @@
 // then the scene holds still to be read. Text is always set with textContent.
 (function () {
   const { seg, eo, eob, eio, lerp, TextFx } = kit;
+  // scripts/build_film.py mirrors these to time code scenes; keep them in step.
   const TYPE_AT = 0.9, TYPE_CPS = 30;
   kit.stockTiming = { TYPE_AT, TYPE_CPS };
 

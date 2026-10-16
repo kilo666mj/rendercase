@@ -373,7 +373,9 @@
     };
     ui.bar.onpointerup = () => { ui.bar.onpointermove = null; };
     ui.bar.onkeydown = (e) => {
-      const starts = scenes.map((s) => s.start), cur = scenes.findIndex((s) => t < s.start + s.dur);
+      const starts = scenes.map((s) => s.start);
+      let cur = scenes.findIndex((s) => t < s.start + s.dur);
+      if (cur < 0) cur = scenes.length - 1; // at the very end, t equals the last scene's end
       const moves = {
         ArrowLeft: t - 2, ArrowRight: t + 2, Home: 0, End: total,
         PageUp: starts[Math.max(0, (t - starts[cur] < 0.5 ? cur - 1 : cur))], PageDown: starts[cur + 1] ?? total,

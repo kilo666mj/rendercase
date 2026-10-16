@@ -40,6 +40,13 @@ class BuildFilmTest(unittest.TestCase):
         self.assertTrue(all(5 <= s["dur"] <= 14 for s in scenes))
         self.assertAlmostEqual(total, sum(s["dur"] for s in scenes))
 
+    def test_code_scene_lasts_until_typing_finishes(self):
+        typed = "x" * 300
+        self.manifest(lambda m: m["scenes"][3]["data"].update(typed=typed))
+        self.build()
+        scenes = json.loads((self.tmp / "out" / "film-data.js").read_text()[len("window.__FILM__ = "):-2])["manifest"]["scenes"]
+        self.assertGreaterEqual(scenes[3]["dur"], b.TYPE_AT + len(typed) / b.TYPE_CPS + 2.5 - 0.05)
+
     def test_custom_scripts_are_scoped_and_fonts_inlined(self):
         for sid in ("a", "b"):
             (self.film / f"scene-{sid}.js").write_text(f"const {{ seg }} = kit;\nkit.scene('{sid}', {{ render() {{}} }});\n")
@@ -63,6 +70,13 @@ class BuildFilmTest(unittest.TestCase):
             "stock data": lambda: self.manifest(lambda m: m["scenes"][1]["data"].pop("value")),
             "no scene code": lambda: self.manifest(lambda m: m["scenes"][1].pop("type")),
             "too long": lambda: self.manifest(lambda m: [s.update(dur=100) for s in m["scenes"]]),
+            "null item": lambda: self.manifest(lambda m: m["scenes"][2]["data"].update(items=[None])),
+            "item without name": lambda: self.manifest(lambda m: m["scenes"][2]["data"].update(items=[{"desc": "x"}])),
+            "numeric stat": lambda: self.manifest(lambda m: m["scenes"][0]["data"].update(stats=[{"value": 82, "label": "x"}])),
+            "unknown field": lambda: self.manifest(lambda m: m["scenes"][1]["data"].update(subtitle="typo")),
+            "hot out of range": lambda: self.manifest(lambda m: m["scenes"][4]["data"].update(hot=9)),
+            "boolean hot": lambda: self.manifest(lambda m: m["scenes"][4]["data"].update(hot=True)),
+            "empty title": lambda: self.manifest(lambda m: m["scenes"][6]["data"].update(title=" ")),
             "stray file": lambda: (self.film / ".env").write_text("SECRET=1"),
             "subdirectory": lambda: (self.film / "notes").mkdir(),
         }

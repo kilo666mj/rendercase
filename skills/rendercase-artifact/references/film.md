@@ -74,11 +74,14 @@ Each scene has `id` (lower-case letters, digits and `-`, starting with a letter,
 unique), `name` (timeline label), optional `type` and `data`, and `dur` in
 seconds. `dur` is required for hand-written scenes. For typed scenes, the build
 derives it from the amount of text when it is omitted: 5 to 14 seconds, enough
-to read after the entrance. Other fields, such as `desc`, are ignored.
+to read after the entrance. A `code` scene also lasts until its `typed` text has
+finished typing, plus a short hold. Other fields, such as `desc`, are ignored.
 
 ### Stock scene types
 
-All text fields are plain strings and are rendered as text, never HTML.
+All text fields are non-empty strings and are rendered as text, never HTML. The
+build rejects missing required fields, unknown fields and wrong types, so a
+mistake fails the build rather than the film.
 
 | Type | `data` fields (required in bold) |
 | --- | --- |
