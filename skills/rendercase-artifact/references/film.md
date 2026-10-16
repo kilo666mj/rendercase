@@ -85,7 +85,8 @@ All text fields are non-empty strings and are rendered as text, never HTML. The
 build rejects missing required fields, unknown fields and wrong types, so a
 mistake fails the build rather than the film. A type that `shared.js` registers
 with a literal name, such as `kit.type("list", …)`, replaces the stock type, and
-the build skips the stock checks for it.
+the build skips the stock checks for it. Commented-out registrations don't
+count.
 
 | Type | `data` fields (required in bold) |
 | --- | --- |
