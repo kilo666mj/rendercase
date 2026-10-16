@@ -1,6 +1,6 @@
 ---
 name: rendercase-artifact
-description: Create, update, and publish self-contained HTML artifacts to Rendercase, including architecture diagrams, comparisons, plans, and technical reports. Use when the user asks for a Rendercase artifact or a durable hosted visual deliverable; do not route through another artifact host unless the user explicitly requests it.
+description: Create, update, and publish self-contained HTML artifacts to Rendercase, including architecture diagrams, comparisons, plans, technical reports, and animated films with music such as weekly recaps. Use when the user asks for a Rendercase artifact or a durable hosted visual deliverable; do not route through another artifact host unless the user explicitly requests it.
 ---
 
 # Rendercase Artifact
@@ -22,6 +22,9 @@ user explicitly asks.
    always take precedence over the Rendercase theme.
 3. Read [references/authoring.md](references/authoring.md) when the artifact
    contains diagrams, comparisons, tables, plans, or other visual structure.
+   For an animated, scored film, such as a weekly recap, read
+   [references/film.md](references/film.md) and build it with the bundled film
+   player instead of writing a player.
 4. Build under a temporary directory, normally with `index.html` as the
    entrypoint. Keep every required local asset inside the bundle and use
    relative paths. Prefer a single self-contained HTML file for modest

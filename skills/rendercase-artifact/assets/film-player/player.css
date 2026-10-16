@@ -1,0 +1,23 @@
+:root { --fp-bg: #000; --fp-fg: #f5f5f5; --fp-dim: rgba(255, 255, 255, .55); --fp-accent: #fff; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--fp-bg); color: var(--fp-fg); font: 14px/1.4 system-ui, sans-serif; }
+#film { display: flex; flex-direction: column; height: 100%; }
+.fp-wrap { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+#stage { position: absolute; left: 0; top: 0; overflow: hidden; transform-origin: 0 0; }
+/* Scenes are pure functions of time: no CSS motion may run on its own. */
+#stage, #stage * { transition: none !important; animation: none !important; }
+.fp-scene { position: absolute; inset: 0; }
+.fp-controls { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: rgba(0, 0, 0, .55); }
+.fp-controls button { flex: none; width: 40px; height: 40px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .12);
+  color: var(--fp-fg); font: inherit; font-size: 15px; cursor: pointer; }
+.fp-controls button:hover { background: rgba(255, 255, 255, .22); }
+.fp-controls :focus-visible { outline: 2px solid var(--fp-accent); outline-offset: 2px; }
+.fp-bar { position: relative; flex: 1; min-width: 60px; height: 24px; cursor: pointer; touch-action: none; }
+.fp-chapters { position: absolute; left: 0; right: 0; top: 9px; height: 6px; display: flex; gap: 3px; }
+.fp-chapters span { flex-basis: 0; border-radius: 3px; background: rgba(255, 255, 255, .22); }
+.fp-chapters span.on { background: rgba(255, 255, 255, .38); }
+.fp-fill { position: absolute; left: 0; top: 9px; height: 6px; border-radius: 3px; background: var(--fp-accent); mix-blend-mode: difference; pointer-events: none; }
+.fp-chapter { color: var(--fp-fg); max-width: 30%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fp-time { color: var(--fp-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fp-error { padding: 16px; color: #ffb4b4; }
+@media (max-width: 560px) { .fp-chapter { display: none; } }
