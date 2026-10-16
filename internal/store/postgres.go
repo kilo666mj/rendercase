@@ -18,6 +18,7 @@ var schemaSQL string
 var (
 	ErrNotFound               = errors.New("not found")
 	ErrServiceSubjectConflict = errors.New("service subject belongs to a person")
+	ErrPersonSubjectConflict  = errors.New("subject belongs to a service user")
 	ErrInvalidVisibility      = errors.New("visibility must be private or authenticated")
 	ErrThemeLimit             = errors.New("branding theme limit reached")
 	ErrActiveTheme            = errors.New("active branding theme cannot be deleted")
@@ -313,6 +314,8 @@ func (d *DB) CleanupExpired(ctx context.Context, auditBefore time.Time) (_ Clean
 	return out, true, nil
 }
 
+// UpsertUser creates or refreshes a person. An existing service user with the same
+// subject is never taken over, so a person cannot inherit its artifacts.
 func (d *DB) UpsertUser(ctx context.Context, subject, username, email, displayName string, admin bool) (User, error) {
 	var u User
 	err := d.Pool.QueryRow(ctx, `
@@ -320,8 +323,12 @@ func (d *DB) UpsertUser(ctx context.Context, subject, username, email, displayNa
 		VALUES ('u_' || gen_random_uuid()::text, $1, $2, $3, $4, $5)
 		ON CONFLICT (oidc_subject) DO UPDATE SET username=EXCLUDED.username, email=EXCLUDED.email,
 			display_name=EXCLUDED.display_name, is_admin=EXCLUDED.is_admin, last_login_at=now()
+		WHERE NOT users.is_service
 		RETURNING id, oidc_subject, username, email, display_name, is_admin`,
 		subject, username, email, displayName, admin).Scan(&u.ID, &u.Subject, &u.Username, &u.Email, &u.DisplayName, &u.Admin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrPersonSubjectConflict
+	}
 	return u, err
 }
 

@@ -42,11 +42,14 @@
     film.scenes.forEach((s, i) => {
       const t0 = T[s.id];
       if (i > 0 && i < ids.length - 1) S.fx("whoosh", t0 + 0.05, { dur: 0.6, vel: 50 });
+      // Entrance start and stagger of each stock type's items, as in stock/scenes.js.
+      const ENTRANCE = { list: [0.4, 0.22], chips: [0.4, 0.12], title: [0.5, 0.3] }[s.type];
       const n = ((s.data && (s.data.items || s.data.chips || s.data.stats)) || []).length;
-      for (let j = 0; j < n; j++) S.fx("pop", t0 + 0.45 + j * (s.type === "chips" ? 0.12 : 0.25), { vel: 38 });
+      if (ENTRANCE) for (let j = 0; j < n; j++) S.fx("pop", t0 + ENTRANCE[0] + j * ENTRANCE[1], { vel: 38 });
       if (s.type === "code" && s.data && s.data.typed) {
         const { TYPE_AT, TYPE_CPS } = kit.stockTiming;
-        S.ticks(Array.from({ length: s.data.typed.length }, (_, j) => t0 + TYPE_AT + j / TYPE_CPS), { vel: 24 });
+        // kit.typist shows character j at TYPE_AT + (j + 1) / TYPE_CPS.
+        S.ticks(Array.from({ length: s.data.typed.length }, (_, j) => t0 + TYPE_AT + (j + 1) / TYPE_CPS), { vel: 24 });
       }
     });
     const fin = triad(prog[0], 1);

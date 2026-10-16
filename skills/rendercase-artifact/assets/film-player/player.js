@@ -371,11 +371,11 @@
       at(e);
       ui.bar.onpointermove = at;
     };
-    ui.bar.onpointerup = () => { ui.bar.onpointermove = null; };
+    // A cancelled or lost drag must end scrubbing too, or hovering would keep seeking.
+    ui.bar.onpointerup = ui.bar.onpointercancel = ui.bar.onlostpointercapture = () => { ui.bar.onpointermove = null; };
     ui.bar.onkeydown = (e) => {
-      const starts = scenes.map((s) => s.start);
-      let cur = scenes.findIndex((s) => t < s.start + s.dur);
-      if (cur < 0) cur = scenes.length - 1; // at the very end, t equals the last scene's end
+      if (e.key === " ") { e.preventDefault(); setPlaying(!playing); return; }
+      const starts = scenes.map((s) => s.start), cur = shown; // frame() keeps shown on the scene at t
       const moves = {
         ArrowLeft: t - 2, ArrowRight: t + 2, Home: 0, End: total,
         PageUp: starts[Math.max(0, (t - starts[cur] < 0.5 ? cur - 1 : cur))], PageDown: starts[cur + 1] ?? total,
@@ -383,7 +383,8 @@
       if (e.key in moves) { e.preventDefault(); seek(moves[e.key]); }
     };
     document.addEventListener("keydown", (e) => {
-      if (e.key === " " && !/^(BUTTON|INPUT)$/.test(e.target.tagName) && e.target !== ui.bar) { e.preventDefault(); setPlaying(!playing); }
+      const typing = /^(BUTTON|INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+      if (e.key === " " && !typing && e.target !== ui.bar) { e.preventDefault(); setPlaying(!playing); }
     });
   }
 

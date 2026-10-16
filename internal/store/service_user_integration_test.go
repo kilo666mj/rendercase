@@ -31,6 +31,9 @@ func TestServiceUserVisibilityIntegration(t *testing.T) {
 	if _, err := db.UpsertServiceUser(ctx, reader.Subject, "hijack"); !errors.Is(err, store.ErrServiceSubjectConflict) {
 		t.Fatalf("person converted to a service user: %v", err)
 	}
+	if _, err := db.UpsertUser(ctx, service.Subject, "person", "person@example.com", "Person", true); !errors.Is(err, store.ErrPersonSubjectConflict) {
+		t.Fatalf("person took over a service user: %v", err)
+	}
 	publish := func(id string, by store.User) store.Artifact {
 		t.Helper()
 		if err := db.CreateUpload(ctx, store.Upload{ID: id, CreatedBy: by.ID, Title: id, Entrypoint: "index.html", TokenHash: []byte(id), ExpiresAt: time.Now().Add(time.Hour)}); err != nil {

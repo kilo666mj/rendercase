@@ -19,8 +19,9 @@ Before publishing:
 - Prefer `rendercase_publish` for a modest ZIP that can be safely passed as
   base64 in one call.
 - For a large bundle, call `rendercase_create_upload`, PUT the ZIP to its
-  short-lived upload URL with `X-Rendercase-Upload-Token`, then call
-  `rendercase_commit_upload`.
+  `upload_url` with the `upload_token` in `X-Rendercase-Upload-Token`, then call
+  `rendercase_commit_upload` with `upload_id` and `upload_token`. Tool results
+  use snake_case keys, such as `artifact.id`, `version.version` and `url`.
 - To revise an existing artifact, pass its exact `artifact_id`; committing
   creates the next immutable version.
 - Use `rendercase_get` after publishing when an additional verification read is

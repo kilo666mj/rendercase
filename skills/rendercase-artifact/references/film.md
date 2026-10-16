@@ -32,6 +32,7 @@ python3 scripts/build_film.py /tmp/film-src /tmp/film-out
 The script validates the film, rejects unknown files, writes `/tmp/film-out/`
 and `/tmp/film-out.zip`, and prints the running time. It exits non-zero with the
 offending field on invalid input, and refuses to overwrite an existing output.
+The built film, with its fonts inlined, must stay under 20 MB.
 Check privacy as for any artifact. Then publish the ZIP following
 [publishing.md](publishing.md): use one new artifact per film unless the user
 wants successive films as versions of one artifact.
@@ -75,24 +76,27 @@ unique), `name` (timeline label), optional `type` and `data`, and `dur` in
 seconds. `dur` is required for hand-written scenes. For typed scenes, the build
 derives it from the amount of text when it is omitted: 5 to 14 seconds, enough
 to read after the entrance. A `code` scene also lasts until its `typed` text has
-finished typing, plus a short hold. Other fields, such as `desc`, are ignored.
+finished typing, plus a short hold. Its length is counted the way the player
+counts it, in UTF-16 code units, so an emoji counts as two characters. Other fields, such as `desc`, are ignored.
 
 ### Stock scene types
 
 All text fields are non-empty strings and are rendered as text, never HTML. The
 build rejects missing required fields, unknown fields and wrong types, so a
-mistake fails the build rather than the film.
+mistake fails the build rather than the film. A type that `shared.js` registers
+with a literal name, such as `kit.type("list", …)`, replaces the stock type, and
+the build skips the stock checks for it.
 
 | Type | `data` fields (required in bold) |
 | --- | --- |
 | `title` | `kicker`, **`title`**, `subtitle`, `stats` (`[{value, label}]`, up to four) |
 | `statement` | `kicker`, **`title`**, `sub`, `tag` |
 | `stat` | `kicker`, **`value`**, **`label`**, `detail`, `tag`. A numeric value counts up. |
-| `list` | **`title`**, **`items`** (strings or `{name, desc, hot}`), `tag` |
-| `chips` | **`title`**, **`chips`** (strings), `hot` (index to highlight), `sub`, `tag` |
-| `code` | **`title`**, `sub`, `tag`, `file`, `before`, **`typed`**, `after`. `typed` is typed out, highlighted. |
+| `list` | `kicker`, **`title`**, **`items`** (strings or `{name, desc, hot}`, up to eight), `tag` |
+| `chips` | `kicker`, **`title`**, **`chips`** (strings, up to twelve), `hot` (index to highlight), `sub`, `tag` |
+| `code` | `kicker`, **`title`**, `sub`, `tag`, `file`, `before`, **`typed`**, `after`. `typed` is typed out, highlighted. |
 | `quote` | **`text`**, `attribution` |
-| `end` | **`title`**, `sub` |
+| `end` | `kicker`, **`title`**, `sub`, `tag` |
 
 ## Kit API
 
@@ -125,7 +129,7 @@ seeded per frame.
 | `kit.eob(x, k = 1.4)` | Back-out ease with overshoot `k`. |
 | `kit.TextFx.fadeFromRight(el, t, t0)` | Splits `el`'s text into words once; word *i* fades in and slides 26 px from the right over 0.5 s from `t0 + 0.11·i`. |
 | `kit.typist(text, t0, cps)` | `{count(t), at(t), end}`: characters typed by `t`, the typed prefix, and the finish time. |
-| `kit.type(name, make)` | Register a reusable scene type; `make(data, scene)` returns `{init, render}`. |
+| `kit.type(name, make)` | Register a reusable scene type; `make(data, scene)` returns `{init, render}`. A stock name replaces that stock type. |
 
 ### Score
 
