@@ -361,21 +361,21 @@ func TestRequireBearerCloudflareAccessSwitchboardDelegation(t *testing.T) {
 	}
 
 	// A configured non-person subject acts as its own never-admin service user.
-	s.cfg.SwitchboardServiceSubjects = map[string]struct{}{"service:agent:factory": {}}
+	s.cfg.SwitchboardServiceSubjects = map[string]struct{}{"service:example:publisher": {}}
 	s.serviceUserUpsert = func(_ context.Context, subject string) (store.User, error) {
 		return store.User{ID: "service:" + subject, Subject: subject}, nil
 	}
-	if user, code := serve(serviceToken(switchboardClientID), "service:agent:factory"); code != http.StatusNoContent || user.ID != "service:service:agent:factory" || user.Admin {
+	if user, code := serve(serviceToken(switchboardClientID), "service:example:publisher"); code != http.StatusNoContent || user.ID != "service:service:example:publisher" || user.Admin {
 		t.Fatalf("service user = %+v, status = %d", user, code)
 	}
 	for name, test := range map[string]struct {
 		assertion string
 		delegated []string
 	}{
-		"unlisted service subject":            {serviceToken(switchboardClientID), []string{"service:agent:other"}},
-		"listed subject from other token":     {serviceToken("other.access"), []string{"service:agent:factory"}},
-		"listed subject from a person":        {userToken, []string{"service:agent:factory"}},
-		"listed subject with another subject": {serviceToken(switchboardClientID), []string{"service:agent:factory", "cloudflare_access:alice-subject"}},
+		"unlisted service subject":            {serviceToken(switchboardClientID), []string{"service:example:other"}},
+		"listed subject from other token":     {serviceToken("other.access"), []string{"service:example:publisher"}},
+		"listed subject from a person":        {userToken, []string{"service:example:publisher"}},
+		"listed subject with another subject": {serviceToken(switchboardClientID), []string{"service:example:publisher", "cloudflare_access:alice-subject"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if user, code := serve(test.assertion, test.delegated...); code != http.StatusUnauthorized {

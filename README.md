@@ -294,8 +294,8 @@ user assertions cannot delegate, and browser routes never honour the header.
 Switchboard and Rendercase must use the same Cloudflare Access team so user
 subjects match.
 
-An unattended workload with no person, such as a factory job, can publish as a
-service user. List its subject, for example `service:agent:factory`, in
+An unattended workload with no person, such as a scheduled job, can publish as a
+service user. List its subject, for example `service:example:publisher`, in
 `RENDERCASE_SWITCHBOARD_SERVICE_SUBJECTS`, and configure Switchboard to send it
 with `forward_access_subject`. Rendercase accepts a listed subject only from
 Switchboard's service token. On first use it creates the subject as a service
