@@ -1,0 +1,92 @@
+# TEMPORARY: rehearses docs/operations.md "Upgrade PostgreSQL to a new major
+# version" on a real PostgreSQL 17 volume. Removed before merge.
+name: pg18 upgrade rehearsal
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: rendercase
+      POSTGRES_PASSWORD: compose-test-password
+      RENDERCASE_PUBLIC_URL: https://rendercase.example.com
+      RENDERCASE_CONTENT_URL: https://content.rendercase.example.com
+      RENDERCASE_COOKIE_SECRET: compose-test-cookie-secret-not-for-production
+      RENDERCASE_OIDC_ISSUER: https://id.example.com
+      RENDERCASE_OAUTH_AUDIENCE: https://rendercase.example.com/mcp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Run old (PostgreSQL 17) revision and seed real schema and data
+        run: |
+          set -eux
+          mkdir -p ../old && git show origin/main:compose.yaml > ../old/compose.yaml
+          grep 'postgres:17' ../old/compose.yaml
+          cd ../old
+          docker compose up -d --wait postgres
+          docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U rendercase -d rendercase < "$GITHUB_WORKSPACE/internal/store/schema.sql"
+          docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U rendercase -d rendercase \
+            -c "INSERT INTO users (id, oidc_subject, username) VALUES ('u_rehearsal', 'sub-rehearsal', 'rehearsal')"
+      - name: "Doc step 1-2: dump on old revision, then compose down"
+        run: |
+          set -eux
+          cd ../old
+          docker compose exec -T postgres pg_dump -U rendercase -d rendercase -Fc > "$RUNNER_TEMP/rendercase-pg17.dump"
+          docker compose down
+          docker volume ls
+      - name: "Fail-safe: new revision on the old volume must refuse to start"
+        run: |
+          set -ux
+          if docker compose up -d --wait --wait-timeout 60 postgres; then
+            echo "PostgreSQL 18 unexpectedly started on PostgreSQL 17 data"; exit 1
+          fi
+          docker compose logs postgres | tee "$RUNNER_TEMP/failsafe.log"
+          grep -q 'in 18+, these Docker images are configured' "$RUNNER_TEMP/failsafe.log"
+          docker compose down
+      - name: "Doc step 3: copy old data to rollback volume, remove original"
+        run: |
+          set -eux
+          docker volume create rendercase-pg17-data
+          docker run --rm \
+            -v rendercase_postgres-data:/from:ro -v rendercase-pg17-data:/to \
+            alpine cp -a /from/. /to/
+          docker volume rm rendercase_postgres-data
+          docker run --rm -v rendercase-pg17-data:/d:ro alpine cat /d/PG_VERSION
+      - name: "Doc step 4-5: start PostgreSQL 18 and restore"
+        run: |
+          set -eux
+          docker compose up -d --wait postgres
+          docker compose exec -T postgres \
+            pg_restore --exit-on-error --single-transaction \
+            -U rendercase -d rendercase < "$RUNNER_TEMP/rendercase-pg17.dump"
+      - name: Verify restored data and that startup migration applies on 18
+        run: |
+          set -eux
+          docker compose exec -T postgres psql -U rendercase -d rendercase -Atc 'show server_version' | grep '^18\.'
+          docker compose exec -T postgres psql -U rendercase -d rendercase -Atc "SELECT username FROM users WHERE id='u_rehearsal'" | grep -x rehearsal
+          docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U rendercase -d rendercase < internal/store/schema.sql
+      - name: "Rollback path: old revision starts from the rollback volume"
+        run: |
+          set -eux
+          docker compose down
+          docker volume rm rendercase_postgres-data
+          docker volume create rendercase_postgres-data
+          docker run --rm \
+            -v rendercase-pg17-data:/from:ro -v rendercase_postgres-data:/to \
+            alpine cp -a /from/. /to/
+          cd ../old
+          docker compose up -d --wait postgres
+          docker compose exec -T postgres psql -U rendercase -d rendercase -Atc 'show server_version' | grep '^17\.'
+          docker compose exec -T postgres psql -U rendercase -d rendercase -Atc "SELECT username FROM users WHERE id='u_rehearsal'" | grep -x rehearsal
+      - name: Logs on failure
+        if: failure()
+        run: |
+          docker compose logs postgres || true
+          (cd ../old && docker compose logs postgres) || true
