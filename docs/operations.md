@@ -50,6 +50,83 @@ Do not edit `schema_version` or mark a schema change complete by hand. Roll back
 to the recorded application revision only with a database and object-store
 state that it supports.
 
+## Upgrade PostgreSQL to a new major version
+
+A PostgreSQL major version cannot open data files written by an earlier major
+version, so a major upgrade in Compose is a dump and restore. The bundled
+`compose.yaml` uses PostgreSQL 18. Its image keeps data in
+`/var/lib/postgresql/18/docker` and mounts the `postgres-data` volume at
+`/var/lib/postgresql`; PostgreSQL 17 and earlier used `/var/lib/postgresql/data`.
+
+If you start the PostgreSQL 18 revision on an existing PostgreSQL 17 volume, the
+`postgres` container exits with `Error: in 18+, these Docker images are
+configured to store database data in a format which is compatible with
+"pg_ctlcluster"` and Rendercase does not start. Nothing is written to the old
+data. Upgrade it as follows.
+
+The commands below assume the Compose project is named `rendercase` (the
+default for a checkout in a `rendercase` directory), so the volume is
+`rendercase_postgres-data`. Check yours with
+`docker volume ls --filter name=postgres-data`.
+
+1. While still on the old revision, stop Rendercase, then dump the database.
+   Also back up artifact storage and `.env` as described in [Back up](#back-up).
+
+   ```sh
+   docker compose stop rendercase
+   docker compose exec -T postgres \
+     pg_dump -U rendercase -d rendercase -Fc > rendercase-pg17.dump
+   ```
+
+2. Stop the stack. This keeps the volumes.
+
+   ```sh
+   docker compose down
+   ```
+
+3. Copy the old data into a separate rollback volume, then remove the original
+   so PostgreSQL 18 can initialize it:
+
+   ```sh
+   docker volume create rendercase-pg17-data
+   docker run --rm \
+     -v rendercase_postgres-data:/from:ro -v rendercase-pg17-data:/to \
+     alpine cp -a /from/. /to/
+   docker volume rm rendercase_postgres-data
+   ```
+
+4. Update the checkout to the new revision and start only PostgreSQL. Do not
+   start Rendercase yet: it would create an empty schema that the restore then
+   collides with.
+
+   ```sh
+   docker compose up -d --wait postgres
+   ```
+
+5. Restore the dump:
+
+   ```sh
+   docker compose exec -T postgres \
+     pg_restore --exit-on-error --single-transaction \
+     -U rendercase -d rendercase < rendercase-pg17.dump
+   ```
+
+6. Start Rendercase and run the checks from step 5 of [Upgrade](#upgrade):
+
+   ```sh
+   docker compose up -d --build rendercase
+   ```
+
+Keep `rendercase-pg17.dump` and the `rendercase-pg17-data` volume until the
+upgraded installation has been verified, then remove the volume with
+`docker volume rm rendercase-pg17-data`.
+
+To roll back before then, run `docker compose down`, remove
+`rendercase_postgres-data`, copy `rendercase-pg17-data` back into a new
+`rendercase_postgres-data` volume with the same `docker run ... cp -a` command
+(source and destination swapped), check out the previous revision and run
+`docker compose up -d`. Any changes made after the upgrade are lost.
+
 ## Back up
 
 PostgreSQL contains identities, authorization, artifact/version metadata,

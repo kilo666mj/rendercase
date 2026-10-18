@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+        image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
         env:
           POSTGRES_PASSWORD: test-password
         ports: ["5432:5432"]
@@ -51,10 +51,37 @@ jobs:
             exit 1
           fi
       - name: Test
-        run: go test -race ./...
+        run: go test -race -count=1 ./...
+
+  compose:
+    name: compose postgres
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: compose-test-password
+      RENDERCASE_PUBLIC_URL: https://rendercase.example.com
+      RENDERCASE_CONTENT_URL: https://content.rendercase.example.com
+      RENDERCASE_COOKIE_SECRET: compose-test-cookie-secret-not-for-production
+      RENDERCASE_OIDC_ISSUER: https://id.example.com
+      RENDERCASE_OAUTH_AUDIENCE: https://rendercase.example.com/mcp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Start PostgreSQL from compose.yaml on a fresh volume
+        run: docker compose up -d --wait --wait-timeout 120 postgres
+      - name: Check server version and data directory
+        run: |
+          docker compose exec -T postgres psql -U rendercase -d rendercase -Atc 'show server_version' | tee version
+          docker compose exec -T postgres psql -U rendercase -d rendercase -Atc 'show data_directory'
+          image_major=$(sed -n 's/.*image: postgres:\([0-9]*\)-.*/\1/p' compose.yaml)
+          grep -q "^${image_major}\." version
+      - name: Show PostgreSQL logs
+        if: failure()
+        run: docker compose logs postgres
+      - name: Clean up
+        if: always()
+        run: docker compose down --volumes
 
   docker:
-    needs: test
+    needs: [test, compose]
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
     permissions:
