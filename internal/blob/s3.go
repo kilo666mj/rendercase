@@ -27,6 +27,7 @@ type S3Config struct {
 
 type s3API interface {
 	HeadBucket(context.Context, *s3.HeadBucketInput, ...func(*s3.Options)) (*s3.HeadBucketOutput, error)
+	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
 	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 }
@@ -166,23 +167,17 @@ func (s *S3Store) Open(ctx context.Context, objectDir, name string) (_ Object, e
 	if err != nil {
 		return Object{}, err
 	}
-	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.key(path.Join(objectDir, "files", name)))})
+	key := s.key(path.Join(objectDir, "files", name))
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
 	if err != nil {
 		return Object{}, err
 	}
-	defer closeWithError(&err, "close S3 object body", out.Body.Close)
 	size := aws.ToInt64(out.ContentLength)
 	if size < 0 || size > s.staging.MaxBundleBytes {
 		return Object{}, errors.New("S3 object size exceeds configured bundle limit")
 	}
-	body, err := io.ReadAll(io.LimitReader(out.Body, s.staging.MaxBundleBytes+1))
-	if err != nil {
-		return Object{}, err
-	}
-	if int64(len(body)) != size {
-		return Object{}, errors.New("S3 object length does not match metadata")
-	}
-	return Object{Body: readSeekNopCloser{Reader: bytes.NewReader(body)}, Size: size, LastModified: aws.ToTime(out.LastModified)}, nil
+	body := &s3ReadSeeker{ctx: ctx, client: s.client, bucket: s.bucket, key: key, size: size}
+	return Object{Body: body, Size: size, LastModified: aws.ToTime(out.LastModified)}, nil
 }
 
 func (s *S3Store) RemoveStage(uploadID string) error { return s.staging.RemoveStage(uploadID) }
@@ -197,6 +192,93 @@ func (s *S3Store) key(name string) string {
 	return path.Join(s.prefix, name)
 }
 
-type readSeekNopCloser struct{ *bytes.Reader }
+type s3ReadSeeker struct {
+	ctx            context.Context
+	client         s3API
+	bucket, key    string
+	size, position int64
+	body           io.ReadCloser
+	closed         bool
+}
 
-func (readSeekNopCloser) Close() error { return nil }
+func (r *s3ReadSeeker) Read(p []byte) (int, error) {
+	if r.closed {
+		return 0, os.ErrClosed
+	}
+	if r.position >= r.size {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > r.size-r.position {
+		p = p[:r.size-r.position]
+	}
+	if r.body == nil {
+		input := &s3.GetObjectInput{Bucket: aws.String(r.bucket), Key: aws.String(r.key)}
+		if r.position > 0 {
+			input.Range = aws.String(fmt.Sprintf("bytes=%d-", r.position))
+		}
+		out, err := r.client.GetObject(r.ctx, input)
+		if err != nil {
+			return 0, err
+		}
+		if length := aws.ToInt64(out.ContentLength); length != r.size-r.position {
+			return 0, errors.Join(errors.New("S3 object length does not match metadata"), out.Body.Close())
+		}
+		r.body = out.Body
+	}
+	n, err := r.body.Read(p)
+	r.position += int64(n)
+	if err != nil {
+		closeErr := r.body.Close()
+		r.body = nil
+		if errors.Is(err, io.EOF) && r.position < r.size {
+			err = io.ErrUnexpectedEOF
+		}
+		if closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		return n, err
+	}
+	return n, nil
+}
+
+func (r *s3ReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	if r.closed {
+		return 0, os.ErrClosed
+	}
+	var position int64
+	switch whence {
+	case io.SeekStart:
+		position = offset
+	case io.SeekCurrent:
+		position = r.position + offset
+	case io.SeekEnd:
+		position = r.size + offset
+	default:
+		return 0, errors.New("invalid seek whence")
+	}
+	if position < 0 {
+		return 0, errors.New("negative seek position")
+	}
+	if position == r.position {
+		return position, nil
+	}
+	if r.body != nil {
+		if err := r.body.Close(); err != nil {
+			return r.position, err
+		}
+		r.body = nil
+	}
+	r.position = position
+	return position, nil
+}
+
+func (r *s3ReadSeeker) Close() error {
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+	if r.body != nil {
+		return r.body.Close()
+	}
+	return nil
+}

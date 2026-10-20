@@ -37,6 +37,14 @@ func TestStoreOpenRejectsObjectDirectoryTraversal(t *testing.T) {
 	}
 }
 
+func TestStageZIPClassifiesCompressedUploadSizeLimit(t *testing.T) {
+	store := Store{Root: t.TempDir(), MaxBundleBytes: 4, MaxFiles: 10}
+	_, err := store.StageZIP(context.Background(), "upload1", "Large", "index.html", bytes.NewReader([]byte("12345")))
+	if err == nil || !IsSizeLimitError(err) || !IsValidationError(err) {
+		t.Fatalf("oversized upload error = %T: %v", err, err)
+	}
+}
+
 func TestCleanupStagesRemovesOnlyOldDirectories(t *testing.T) {
 	root := t.TempDir()
 	store := Store{Root: root, MaxBundleBytes: 1024, MaxFiles: 10}

@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,11 +19,18 @@ type memoryS3 struct {
 	objects    map[string][]byte
 	content    map[string]string
 	headBucket bool
+	getRanges  []string
 }
 
 func (m *memoryS3) HeadBucket(context.Context, *s3.HeadBucketInput, ...func(*s3.Options)) (*s3.HeadBucketOutput, error) {
 	m.headBucket = true
 	return &s3.HeadBucketOutput{}, nil
+}
+
+func (m *memoryS3) HeadObject(_ context.Context, in *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+	body := m.objects[aws.ToString(in.Key)]
+	now := time.Now()
+	return &s3.HeadObjectOutput{ContentLength: aws.Int64(int64(len(body))), LastModified: &now}, nil
 }
 
 func (m *memoryS3) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
@@ -35,6 +45,15 @@ func (m *memoryS3) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...func
 
 func (m *memoryS3) GetObject(_ context.Context, in *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 	body := m.objects[aws.ToString(in.Key)]
+	rangeValue := aws.ToString(in.Range)
+	m.getRanges = append(m.getRanges, rangeValue)
+	if strings.HasPrefix(rangeValue, "bytes=") && strings.HasSuffix(rangeValue, "-") {
+		offset, err := strconv.ParseInt(strings.TrimSuffix(strings.TrimPrefix(rangeValue, "bytes="), "-"), 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		body = body[offset:]
+	}
 	now := time.Now()
 	return &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(body)), ContentLength: aws.Int64(int64(len(body))), LastModified: &now}, nil
 }
@@ -79,6 +98,9 @@ func TestS3StoreStagesPublishesAndReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(client.getRanges) != 0 {
+		t.Fatal("opening an S3 object fetched its body")
+	}
 	defer func() {
 		if err := object.Body.Close(); err != nil {
 			t.Errorf("close object body: %v", err)
@@ -87,6 +109,36 @@ func TestS3StoreStagesPublishesAndReads(t *testing.T) {
 	got, err := io.ReadAll(object.Body)
 	if err != nil || string(got) != "<h1>Hello</h1>" || object.Size != int64(len(got)) {
 		t.Fatalf("opened object = %q, size %d, err %v", got, object.Size, err)
+	}
+	if len(client.getRanges) != 1 || client.getRanges[0] != "" {
+		t.Fatalf("initial S3 reads = %v", client.getRanges)
+	}
+	if _, err := object.Body.Seek(4, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	got, err = io.ReadAll(object.Body)
+	if err != nil || string(got) != "Hello</h1>" {
+		t.Fatalf("ranged read = %q, %v", got, err)
+	}
+	if client.getRanges[len(client.getRanges)-1] != "bytes=4-" {
+		t.Fatalf("ranged S3 reads = %v", client.getRanges)
+	}
+	if err := object.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	object, err = store.Open(ctx, objectDir, "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	request.Header.Set("Range", "bytes=4-8")
+	response := httptest.NewRecorder()
+	http.ServeContent(response, request, "index.html", object.LastModified, object.Body)
+	if response.Code != http.StatusPartialContent || response.Body.String() != "Hello" {
+		t.Fatalf("HTTP range response = %d %q", response.Code, response.Body.String())
+	}
+	if client.getRanges[len(client.getRanges)-1] != "bytes=4-" {
+		t.Fatalf("HTTP range S3 reads = %v", client.getRanges)
 	}
 	if _, err := store.Open(ctx, objectDir, "../secret"); err == nil {
 		t.Fatal("S3 path traversal accepted")
