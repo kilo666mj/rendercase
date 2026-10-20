@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kilo666mj/rendercase/internal/blob"
 	"github.com/kilo666mj/rendercase/internal/config"
 	"github.com/kilo666mj/rendercase/internal/store"
 )
@@ -50,7 +51,7 @@ func TestViewerShowsSharingControlsOnlyToOwner(t *testing.T) {
 	if err := tpl.ExecuteTemplate(&rendered, "viewer", data); err != nil {
 		t.Fatal(err)
 	}
-	for _, wanted := range []string{`stroke="currentColor"`, `fill="var(--accent)"`, `id="share-open"`, `id="share-dialog"`, `data-artifact="a_example"`, `Manage sharing`, `Who can open this artifact?`, `Private — only you`, `All accounts — anyone signed in`, `value="authenticated" selected`, `PUBLIC LINKS · NO ACCOUNT REQUIRED`, `async function responseData(response)`, `Create a public link`, `Create public link for version 3`} {
+	for _, wanted := range []string{`stroke="currentColor"`, `fill="var(--accent)"`, `id="share-open"`, `id="share-dialog"`, `data-artifact="a_example"`, `Manage sharing`, `Who can open this artifact?`, `Private — only you`, `All accounts — anyone signed in`, `value="authenticated" selected`, `PUBLIC LINKS · NO ACCOUNT REQUIRED`, `src="/static/viewer.js"`, `Create a public link`, `Create public link for version 3`} {
 		if !strings.Contains(rendered.String(), wanted) {
 			t.Errorf("owner viewer missing %q", wanted)
 		}
@@ -211,6 +212,15 @@ func TestUploadURLUsesDedicatedCapabilityPath(t *testing.T) {
 	}
 }
 
+func TestUploadSizeLimitReturnsRequestEntityTooLarge(t *testing.T) {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/upload/u_example", nil)
+	(&Server{}).writeUploadStageError(response, request, &blob.SizeLimitError{Limit: 1024})
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized upload status = %d, want %d", response.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
 func TestUploadCapabilityPathAcceptsOnlyPUT(t *testing.T) {
 	s := &Server{cfg: config.Config{
 		PublicURL:  mustParseURL(t, "https://rendercase.example/"),
@@ -278,7 +288,7 @@ func TestSecurityCookiesUseHostPrefix(t *testing.T) {
 }
 
 func TestShareListBuildsDynamicContentWithDOMAPIs(t *testing.T) {
-	source, err := webFS.ReadFile("web/viewer.html")
+	source, err := webFS.ReadFile("web/viewer.js")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,6 +302,42 @@ func TestShareListBuildsDynamicContentWithDOMAPIs(t *testing.T) {
 		if !strings.Contains(text, required) {
 			t.Errorf("share list missing DOM assignment %q", required)
 		}
+	}
+}
+
+func TestManagementTemplatesAvoidInlineScriptAndStyle(t *testing.T) {
+	for _, name := range []string{"web/index.html", "web/viewer.html", "web/admin.html", "web/login.html"} {
+		source, err := webFS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(source)
+		for _, forbidden := range []string{"<style", "style=", "onchange=", "<script>", "<script>("} {
+			if strings.Contains(text, forbidden) {
+				t.Errorf("%s contains inline executable content %q", name, forbidden)
+			}
+		}
+	}
+}
+
+func TestManagementHostSetsStrictSecurityHeaders(t *testing.T) {
+	s := &Server{cfg: config.Config{
+		PublicURL:  mustParseURL(t, "https://rendercase.example/"),
+		ContentURL: mustParseURL(t, "https://content.rendercase.example/"),
+	}, mcp: http.NotFoundHandler()}
+	response := httptest.NewRecorder()
+	s.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://rendercase.example/healthz", nil))
+	csp := response.Header().Get("Content-Security-Policy")
+	for _, wanted := range []string{"script-src 'self'", "style-src 'self'", "frame-src https://content.rendercase.example"} {
+		if !strings.Contains(csp, wanted) {
+			t.Errorf("management CSP %q missing %q", csp, wanted)
+		}
+	}
+	if strings.Contains(csp, "unsafe-inline") || strings.Contains(csp, "unsafe-eval") {
+		t.Fatalf("management CSP permits unsafe execution: %q", csp)
+	}
+	if got := response.Header().Get("Strict-Transport-Security"); got != "max-age=31536000" {
+		t.Fatalf("HSTS = %q", got)
 	}
 }
 

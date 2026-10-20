@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestAdminArtifactLifecycleIntegration(t *testing.T) {
@@ -67,6 +68,8 @@ func TestAdminArtifactLifecycleIntegration(t *testing.T) {
 		INSERT INTO shares(id,artifact_id,version,created_by,token_hash) VALUES
 		('s_one','a_test',1,'u_owner',decode('01','hex')),
 		('s_two','a_test',1,'u_owner',decode('02','hex'));
+		INSERT INTO shares(id,artifact_id,version,created_by,token_hash,view_limit) VALUES
+		('s_limited','a_test',1,'u_owner',decode('03','hex'),2);
 		INSERT INTO share_sessions(token_hash,share_id,expires_at) VALUES
 		(decode('11','hex'),'s_one',now()+interval '1 hour'),
 		(decode('12','hex'),'s_two',now()+interval '1 hour');`); err != nil {
@@ -97,11 +100,34 @@ func TestAdminArtifactLifecycleIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(artifacts) != 1 || artifacts[0].OwnerEmail != "owner@example.com" || len(artifacts[0].Shares) != 2 {
+	if len(artifacts) != 1 || artifacts[0].OwnerEmail != "owner@example.com" || len(artifacts[0].Shares) != 3 {
 		t.Fatalf("admin artifacts = %+v", artifacts)
+	}
+	limited, err := db.ExchangeShare(ctx, []byte{3}, []byte{0x13}, time.Now().Add(time.Hour))
+	if err != nil || limited.ViewCount != 0 {
+		t.Fatalf("exchange limited share = %+v, %v", limited, err)
+	}
+	for want := 1; want <= 2; want++ {
+		viewed, viewErr := db.ShareBySession(ctx, []byte{0x13})
+		if viewErr != nil || viewed.ViewCount != want {
+			t.Fatalf("limited share view %d = %+v, %v", want, viewed, viewErr)
+		}
+	}
+	if _, err := db.ShareBySession(ctx, []byte{0x13}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("limited share allowed a third view: %v", err)
 	}
 	if artifactID, err := db.AdminRevokeShare(ctx, "s_one"); err != nil || artifactID != "a_test" {
 		t.Fatalf("revoke share = %q, %v", artifactID, err)
+	}
+	if artifactID, err := db.RevokeShare(ctx, "s_two", "u_owner"); err != nil || artifactID != "a_test" {
+		t.Fatalf("owner revoke share = %q, %v", artifactID, err)
+	}
+	var ownerShareSessions int
+	if err := db.Pool.QueryRow(ctx, `SELECT count(*) FROM share_sessions WHERE share_id='s_two'`).Scan(&ownerShareSessions); err != nil {
+		t.Fatal(err)
+	}
+	if ownerShareSessions != 0 {
+		t.Fatalf("owner-revoked share retained %d sessions", ownerShareSessions)
 	}
 	removed, err := db.AdminDeleteArtifact(ctx, "a_test")
 	if err != nil || removed.OwnerID != "u_owner" {

@@ -59,9 +59,21 @@ func validationErrorf(format string, args ...any) error {
 	return &ValidationError{Message: fmt.Sprintf(format, args...)}
 }
 
+// SizeLimitError reports that the compressed request body exceeded the
+// configured upload limit. It is separate from expanded-archive validation so
+// HTTP callers can return 413 only when the request itself is too large.
+type SizeLimitError struct{ Limit int64 }
+
+func (e *SizeLimitError) Error() string { return fmt.Sprintf("bundle exceeds %d bytes", e.Limit) }
+
+func IsSizeLimitError(err error) bool {
+	var sizeErr *SizeLimitError
+	return errors.As(err, &sizeErr)
+}
+
 func IsValidationError(err error) bool {
 	var validationErr *ValidationError
-	return errors.As(err, &validationErr)
+	return errors.As(err, &validationErr) || IsSizeLimitError(err)
 }
 
 func (s Store) Init(_ context.Context) error {
@@ -109,7 +121,7 @@ func (s Store) StageZIP(ctx context.Context, uploadID, title, entrypoint string,
 		return Staged{}, closeErr
 	}
 	if written > s.MaxBundleBytes {
-		return Staged{}, validationErrorf("bundle exceeds %d bytes", s.MaxBundleBytes)
+		return Staged{}, &SizeLimitError{Limit: s.MaxBundleBytes}
 	}
 
 	zr, err := zip.OpenReader(zipPath)

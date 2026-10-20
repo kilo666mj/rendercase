@@ -120,6 +120,8 @@ func (s *Server) Handler() http.Handler {
 	mainMux.HandleFunc("GET /static/favicon.svg", s.favicon)
 	mainMux.HandleFunc("GET /static/brand-logo", s.brandLogo)
 	mainMux.HandleFunc("GET /static/style.css", s.style)
+	mainMux.HandleFunc("GET /static/viewer.js", staticWebFile("web/viewer.js", "text/javascript; charset=utf-8"))
+	mainMux.HandleFunc("GET /static/admin.js", staticWebFile("web/admin.js", "text/javascript; charset=utf-8"))
 	mainMux.HandleFunc("GET /auth/login", s.login)
 	mainMux.HandleFunc("GET /api/v1/auth/oidc/callback", s.callback)
 	mainMux.Handle("POST /auth/logout", s.requireUser(http.HandlerFunc(s.logout)))
@@ -160,9 +162,16 @@ func (s *Server) Handler() http.Handler {
 		}
 		switch host {
 		case strings.ToLower(s.cfg.PublicURL.Hostname()):
+			if s.cfg.PublicURL.Scheme == "https" {
+				w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+			}
+			w.Header().Set("Content-Security-Policy", managementCSP(s.cfg.ContentURL))
 			w.Header().Set("X-Frame-Options", "DENY")
 			mainMux.ServeHTTP(w, r)
 		case strings.ToLower(s.cfg.ContentURL.Hostname()):
+			if s.cfg.ContentURL.Scheme == "https" {
+				w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+			}
 			contentMux.ServeHTTP(w, r)
 		default:
 			http.Error(w, "unknown host", http.StatusMisdirectedRequest)
@@ -227,6 +236,29 @@ func (s *Server) style(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(b)
 	_, _ = fmt.Fprintf(w, "\n:root{--bg:%s;--panel:%s;--text:%s;--muted:%s;--accent:%s;--violet:%s;--cyan:%s;--line:%s24;--line-hot:%s61}\n", branding.BackgroundColor, branding.PanelColor, branding.TextColor, branding.MutedColor, branding.PrimaryColor, branding.AccentColor, branding.PrimaryColor, branding.PrimaryColor, branding.PrimaryColor)
+}
+
+func staticWebFile(name, contentType string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		b, err := webFS.ReadFile(name)
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = w.Write(b)
+	}
+}
+
+func managementCSP(contentURL *url.URL) string {
+	frameSource := "'none'"
+	if contentURL != nil && contentURL.Scheme != "" && contentURL.Host != "" {
+		frameSource = contentURL.Scheme + "://" + contentURL.Host
+	}
+	return "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; " +
+		"script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src " + frameSource
 }
 
 func (s *Server) favicon(w http.ResponseWriter, r *http.Request) {
@@ -546,6 +578,7 @@ func (s *Server) sharedViewer(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	s.audit(r, "", share.ID, share.ArtifactID, "share.view", map[string]any{"view_count": share.ViewCount})
 	s.renderViewer(r, w, v, store.Artifact{}, nil, false)
 }
 
@@ -830,11 +863,7 @@ func (s *Server) putUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	staged, err := s.blobs.StageZIP(r.Context(), upload.ID, upload.Title, upload.Entrypoint, http.MaxBytesReader(w, r.Body, s.cfg.MaxBundleBytes+1))
 	if err != nil {
-		if blob.IsValidationError(err) {
-			writeError(w, http.StatusBadRequest, err.Error())
-		} else {
-			s.fail(w, r, err)
-		}
+		s.writeUploadStageError(w, r, err)
 		return
 	}
 	manifest, err := json.Marshal(staged.Manifest)
@@ -847,6 +876,16 @@ func (s *Server) putUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"manifest_sha256": staged.Digest, "bytes": staged.Bytes, "files": len(staged.Manifest.Files)})
+}
+
+func (s *Server) writeUploadStageError(w http.ResponseWriter, r *http.Request, err error) {
+	if blob.IsSizeLimitError(err) {
+		writeError(w, http.StatusRequestEntityTooLarge, err.Error())
+	} else if blob.IsValidationError(err) {
+		writeError(w, http.StatusBadRequest, err.Error())
+	} else {
+		s.fail(w, r, err)
+	}
 }
 
 func (s *Server) commitUpload(w http.ResponseWriter, r *http.Request) {
@@ -968,7 +1007,9 @@ func (s *Server) exchangeShare(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.audit(r, "", share.ID, share.ArtifactID, "share.view", map[string]any{"view_count": share.ViewCount})
+	if share.ExpiresAt != nil && share.ExpiresAt.Before(expires) {
+		expires = *share.ExpiresAt
+	}
 	setCookie(w, shareCookieName, plain, expires, true)
 	http.Redirect(w, r, sharedArtifactPath(share.ArtifactID), http.StatusFound)
 }

@@ -648,12 +648,15 @@ func (d *DB) ExchangeShare(ctx context.Context, tokenHash, sessionHash []byte, e
 	}
 	defer rollbackTransaction(ctx, tx, &err)
 	var s Share
-	err = tx.QueryRow(ctx, `UPDATE shares SET view_count=view_count+1 WHERE token_hash=$1 AND revoked_at IS NULL
+	err = tx.QueryRow(ctx, `SELECT id,artifact_id,version,created_by,expires_at,view_limit,view_count,revoked_at FROM shares WHERE token_hash=$1 AND revoked_at IS NULL
 		AND (expires_at IS NULL OR expires_at>now()) AND (view_limit IS NULL OR view_count<view_limit)
-		RETURNING id,artifact_id,version,created_by,expires_at,view_limit,view_count,revoked_at`, tokenHash).
+		FOR SHARE`, tokenHash).
 		Scan(&s.ID, &s.ArtifactID, &s.Version, &s.CreatedBy, &s.ExpiresAt, &s.ViewLimit, &s.ViewCount, &s.RevokedAt)
 	if err != nil {
 		return Share{}, translate(err)
+	}
+	if s.ExpiresAt != nil && s.ExpiresAt.Before(expires) {
+		expires = *s.ExpiresAt
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO share_sessions(token_hash,share_id,expires_at) VALUES($1,$2,$3)`, sessionHash, s.ID, expires); err != nil {
 		return Share{}, err
@@ -663,19 +666,32 @@ func (d *DB) ExchangeShare(ctx context.Context, tokenHash, sessionHash []byte, e
 
 func (d *DB) ShareBySession(ctx context.Context, sessionHash []byte) (Share, error) {
 	var s Share
-	err := d.Pool.QueryRow(ctx, `SELECT s.id,s.artifact_id,s.version,s.created_by,s.expires_at,s.view_limit,s.view_count,s.revoked_at
-		FROM share_sessions ss JOIN shares s ON s.id=ss.share_id WHERE ss.token_hash=$1 AND ss.expires_at>now()
-		AND s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at>now())`, sessionHash).
+	err := d.Pool.QueryRow(ctx, `UPDATE shares s SET view_count=s.view_count+1 FROM share_sessions ss
+		WHERE ss.share_id=s.id AND ss.token_hash=$1 AND ss.expires_at>now()
+		AND s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at>now())
+		AND (s.view_limit IS NULL OR s.view_count<s.view_limit)
+		RETURNING s.id,s.artifact_id,s.version,s.created_by,s.expires_at,s.view_limit,s.view_count,s.revoked_at`, sessionHash).
 		Scan(&s.ID, &s.ArtifactID, &s.Version, &s.CreatedBy, &s.ExpiresAt, &s.ViewLimit, &s.ViewCount, &s.RevokedAt)
 	return s, translate(err)
 }
 
-func (d *DB) RevokeShare(ctx context.Context, shareID, userID string) (string, error) {
+func (d *DB) RevokeShare(ctx context.Context, shareID, userID string) (_ string, err error) {
+	tx, err := d.Pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer rollbackTransaction(ctx, tx, &err)
 	var artifactID string
-	err := d.Pool.QueryRow(ctx, `UPDATE shares s SET revoked_at=now() FROM artifacts a
+	err = tx.QueryRow(ctx, `UPDATE shares s SET revoked_at=now() FROM artifacts a
 		WHERE s.id=$1 AND a.id=s.artifact_id AND a.owner_id=$2 AND s.revoked_at IS NULL
 		RETURNING s.artifact_id`, shareID, userID).Scan(&artifactID)
-	return artifactID, translate(err)
+	if err != nil {
+		return "", translate(err)
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM share_sessions WHERE share_id=$1`, shareID); err != nil {
+		return "", err
+	}
+	return artifactID, tx.Commit(ctx)
 }
 
 func (d *DB) Audit(ctx context.Context, userID, shareID, artifactID, action, requestID string, remote netip.Addr, details any) error {
