@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +14,66 @@ import (
 	"github.com/kilo666mj/rendercase/internal/store"
 	"go.michaelspost.com/mcpkit/mcpkittest"
 )
+
+func TestMCPInitializeThroughLoopbackProxy(t *testing.T) {
+	s := &Server{cfg: config.Config{
+		PublicURL:  &url.URL{Scheme: "https", Host: "rendercase.example"},
+		ContentURL: &url.URL{Scheme: "https", Host: "content.example"},
+	}}
+	handler, err := s.mcpHandler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Authentication normally supplies this identity before the MCP handler.
+	s.mcp = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userContextKey{}, store.User{ID: "user"})))
+	})
+	server := httptest.NewServer(s.Handler())
+	defer server.Close()
+	for _, test := range []struct {
+		name, host, origin string
+		wantStatus         int
+	}{
+		{name: "canonical host", host: "rendercase.example", wantStatus: http.StatusOK},
+		{name: "unknown host", host: "attacker.example", wantStatus: http.StatusMisdirectedRequest},
+		{name: "content host", host: "content.example", wantStatus: http.StatusNotFound},
+		{name: "cross origin", host: "rendercase.example", origin: "https://attacker.example", wantStatus: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"proxy-test","version":"1"}}}`
+			request, err := http.NewRequest(http.MethodPost, server.URL+"/mcp", strings.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Host = test.host
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Accept", "application/json, text/event-stream")
+			if test.origin != "" {
+				request.Header.Set("Origin", test.origin)
+			}
+			response, err := server.Client().Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = response.Body.Close() }()
+			if response.StatusCode != test.wantStatus {
+				t.Fatalf("status = %d, want %d", response.StatusCode, test.wantStatus)
+			}
+			if response.StatusCode == http.StatusOK {
+				var result struct {
+					Result json.RawMessage `json:"result"`
+					Error  json.RawMessage `json:"error"`
+				}
+				if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+					t.Fatal(err)
+				}
+				if len(result.Result) == 0 || len(result.Error) != 0 {
+					t.Fatalf("initialize response = %+v", result)
+				}
+			}
+		})
+	}
+}
 
 func TestMCPTransportBoundsRequestsAndRejectsCrossOrigin(t *testing.T) {
 	s := &Server{cfg: config.Config{MaxBundleBytes: 8}}
