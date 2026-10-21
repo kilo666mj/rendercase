@@ -37,6 +37,12 @@ func (s *Server) mcpHandler() (http.Handler, error) {
 	}, mcpkit.HTTPOptions{
 		MaxRequestBodyBytes: ((s.cfg.MaxBundleBytes + 2) / 3 * 4) + (1 << 20),
 		Logger:              s.log,
+		// Handler admits MCP only on the configured management hostname and
+		// requireBearer authenticates requests before they reach this handler.
+		// Reverse proxies preserve that hostname when dialing our loopback
+		// listener, so the SDK's localhost-only Host check is inappropriate.
+		// Keep the independent browser origin protection enabled.
+		DisableLocalhostProtection: true,
 	})
 }
 
