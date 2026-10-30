@@ -264,6 +264,27 @@ Administrators additionally have these endpoints:
 - `DELETE /api/v1/admin/artifacts/{artifact}` soft-deletes an artifact and
   revokes all of its shares. It does not erase stored object files.
 
+## Comments
+
+Signed-in viewers can comment on an artifact from its viewer page. **Add
+comment** lets a reviewer click an element or select text inside the artifact;
+**Comment on whole version** leaves a comment that is not tied to one element.
+Replies form threads, and the thread author, the owner, and editors can resolve
+or reopen them. Comments are plain text, at most 10,000 characters, and each
+artifact holds at most 2,000.
+
+Comments are never shown through capability share links. Anchoring works
+through a small script that the content origin adds to HTML files of 5 MiB or
+less, and only for signed-in views; share-link responses stay byte-identical to
+the uploaded bundle. The script receives only pin positions, never comment text
+or author names.
+
+Agents read feedback with `rendercase_list_comments`, reply with
+`rendercase_reply_comment`, and close the loop with
+`rendercase_resolve_comment_thread` after publishing a fixed version. The REST
+API is under `/api/v1/artifacts/{artifact}/threads`, `/api/v1/threads/{thread}`,
+and `/api/v1/comments/{comment}`.
+
 ## Connect an MCP client
 
 The MCP endpoint is `/mcp`. OAuth protected-resource metadata is published at
@@ -317,6 +338,9 @@ Available MCP tools:
 - `rendercase_set_visibility`
 - `rendercase_share`
 - `rendercase_revoke_share`
+- `rendercase_list_comments`
+- `rendercase_reply_comment`
+- `rendercase_resolve_comment_thread`
 - `rendercase_admin_list` (administrators only)
 - `rendercase_admin_get_branding` (administrators only)
 - `rendercase_admin_update_branding` (administrators only)
@@ -411,7 +435,10 @@ Durations use Go syntax such as `30m`, `12h`, or `168h`. See
   issuer, audience, and lifetime against the team JWKS on every browser request;
   it never trusts an identity header without cryptographic verification.
 - Existing artifact versions are immutable, and shares pin a version by default.
-- Request sizes, titles, annotations, and upload expansion are bounded.
+- Request sizes, titles, comments, anchors, and upload expansion are bounded.
+- The comment bridge is injected only into signed-in views. Messages from the
+  artifact frame are validated as untrusted input, and the frame never receives
+  comment bodies or author identities.
 - Expired sessions, states, uploads, abandoned files, and old audit events are
   removed by periodic maintenance.
 
