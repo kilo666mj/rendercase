@@ -120,6 +120,31 @@ CREATE TABLE IF NOT EXISTS share_sessions (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS comment_threads (
+    id text PRIMARY KEY,
+    artifact_id text NOT NULL,
+    version integer NOT NULL,
+    anchor jsonb,
+    created_by text NOT NULL REFERENCES users(id),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    resolved_at timestamptz,
+    resolved_by text REFERENCES users(id),
+    FOREIGN KEY (artifact_id, version) REFERENCES artifact_versions(artifact_id, version) ON DELETE CASCADE,
+    CHECK ((resolved_at IS NULL) = (resolved_by IS NULL))
+);
+CREATE INDEX IF NOT EXISTS comment_threads_artifact_idx ON comment_threads(artifact_id, version, created_at);
+
+CREATE TABLE IF NOT EXISTS comments (
+    id text PRIMARY KEY,
+    thread_id text NOT NULL REFERENCES comment_threads(id) ON DELETE CASCADE,
+    author_id text NOT NULL REFERENCES users(id),
+    body text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    edited_at timestamptz,
+    deleted_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS comments_thread_idx ON comments(thread_id, created_at);
+
 DROP TABLE IF EXISTS annotations;
 
 CREATE TABLE IF NOT EXISTS audit_events (
