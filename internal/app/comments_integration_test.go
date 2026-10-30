@@ -244,6 +244,7 @@ func TestCommentAPIValidationIntegration(t *testing.T) {
 		"point range":      {"body": "x", "anchor": map[string]any{"selector": "p", "point": map[string]any{"x": 1.5, "y": 0}}},
 		"selector length":  {"body": "x", "anchor": map[string]any{"selector": strings.Repeat("a", 513)}},
 		"negative version": {"body": "x", "version": -1},
+		"huge version":     {"body": "x", "version": 3000000000},
 		"unknown field":    {"body": "x", "colour": "red"},
 	} {
 		code, out := f.do(&f.viewer, http.MethodPost, f.threadsPath(), body)
@@ -255,7 +256,7 @@ func TestCommentAPIValidationIntegration(t *testing.T) {
 	expectStatus(t, "oversized request", code, http.StatusBadRequest, out)
 	code, out = f.do(&f.viewer, http.MethodPost, f.threadsPath(), map[string]any{"body": "x", "version": 99})
 	expectStatus(t, "missing version", code, http.StatusNotFound, out)
-	for _, query := range []string{"?version=abc", "?version=0", "?resolved=maybe"} {
+	for _, query := range []string{"?version=abc", "?version=0", "?version=3000000000", "?resolved=maybe"} {
 		code, out = f.do(&f.viewer, http.MethodGet, f.threadsPath()+query, nil)
 		expectStatus(t, "query "+query, code, http.StatusBadRequest, out)
 	}
