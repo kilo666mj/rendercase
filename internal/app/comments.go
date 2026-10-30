@@ -19,6 +19,7 @@ const (
 	maxCommentRunes        = 10000
 	maxCommentRequestBytes = 64 << 10
 	maxAnchorSelectorBytes = 512
+	maxAnchorPageBytes     = 512
 	maxAnchorQuoteRunes    = 500
 	maxAnchorContextRunes  = 32
 )
@@ -45,6 +46,7 @@ func normalizeCommentBody(v string) (string, error) {
 
 type commentAnchor struct {
 	Selector string       `json:"selector"`
+	Page     string       `json:"page,omitempty"`
 	Quote    *anchorQuote `json:"quote,omitempty"`
 	Point    *anchorPoint `json:"point,omitempty"`
 }
@@ -75,10 +77,13 @@ func validateAnchor(raw json.RawMessage) (json.RawMessage, error) {
 	dec.DisallowUnknownFields()
 	var a commentAnchor
 	if err := dec.Decode(&a); err != nil || dec.More() {
-		return nil, commentInputError{"anchor must be an object with selector, quote, and point"}
+		return nil, commentInputError{"anchor must be an object with selector, page, quote, and point"}
 	}
 	if a.Selector == "" || len(a.Selector) > maxAnchorSelectorBytes || !utf8.ValidString(a.Selector) || hasControl(a.Selector) {
 		return nil, commentInputError{fmt.Sprintf("anchor selector must be 1 to %d bytes of printable text", maxAnchorSelectorBytes)}
+	}
+	if len(a.Page) > maxAnchorPageBytes || !utf8.ValidString(a.Page) || hasControl(a.Page) {
+		return nil, commentInputError{fmt.Sprintf("anchor page must be at most %d bytes of printable text", maxAnchorPageBytes)}
 	}
 	if q := a.Quote; q != nil {
 		if q.Exact == "" || utf8.RuneCountInString(q.Exact) > maxAnchorQuoteRunes {
