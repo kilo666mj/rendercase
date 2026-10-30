@@ -40,10 +40,11 @@ func ticketAllows(subject, artifactID string, version int) (ok, comments bool) {
 }
 
 // injectBridge inserts the bridge script after the first <head>, <html>, or
-// doctype tag found in the first bridgeScanBytes, or at the start of the
-// document. Matching is ASCII case-insensitive so byte offsets stay valid.
+// doctype tag found in the first bridgeScanBytes outside HTML comments, or at
+// the start of the document. Matching is ASCII case-insensitive so byte
+// offsets stay valid.
 func injectBridge(doc []byte) []byte {
-	lower := asciiLower(doc[:min(len(doc), bridgeScanBytes)])
+	lower := blankComments(asciiLower(doc[:min(len(doc), bridgeScanBytes)]))
 	at := openingTagEnd(lower, "<head")
 	if at < 0 {
 		at = openingTagEnd(lower, "<html")
@@ -72,6 +73,27 @@ func asciiLower(b []byte) []byte {
 		out[i] = c
 	}
 	return out
+}
+
+// blankComments overwrites each <!-- ... --> span in b with spaces, in place,
+// so tag matching skips it while byte offsets stay valid. An unterminated
+// comment blanks everything after its start.
+func blankComments(b []byte) []byte {
+	for from := 0; ; {
+		i := bytes.Index(b[from:], []byte("<!--"))
+		if i < 0 {
+			return b
+		}
+		start := from + i
+		end := len(b)
+		if j := bytes.Index(b[start+len("<!--"):], []byte("-->")); j >= 0 {
+			end = start + len("<!--") + j + len("-->")
+		}
+		for k := start; k < end; k++ {
+			b[k] = ' '
+		}
+		from = end
+	}
 }
 
 // openingTagEnd returns the index just past the '>' closing the first tag
