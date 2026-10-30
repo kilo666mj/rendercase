@@ -18,11 +18,11 @@ func parseThreadQuery(v url.Values) (threadQuery, error) {
 	case "all":
 		q.AllVersions = true
 	default:
-		n, err := strconv.Atoi(raw)
+		n, err := strconv.ParseInt(raw, 10, 32)
 		if err != nil || n < 1 {
 			return threadQuery{}, commentInputError{"version must be a positive integer or all"}
 		}
-		q.Version = n
+		q.Version = int(n)
 	}
 	switch v.Get("resolved") {
 	case "", "false":
