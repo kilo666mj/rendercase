@@ -2,12 +2,15 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/kilo666mj/rendercase/internal/securetoken"
 	"github.com/kilo666mj/rendercase/internal/store"
 )
 
@@ -156,4 +159,202 @@ func newThreadView(t store.CommentThread, a store.Artifact, u store.User) thread
 		v.Comments = append(v.Comments, newCommentView(c, a, u))
 	}
 	return v
+}
+
+var (
+	errCommentArtifactNotFound = errors.New("artifact not found")
+	errCommentVersionNotFound  = errors.New("artifact version not found")
+	errCommentThreadNotFound   = errors.New("comment thread not found")
+	errCommentNotFound         = errors.New("comment not found")
+	errCommentForbidden        = errors.New("not allowed to change this comment")
+)
+
+// threadQuery selects threads for listing. With AllVersions false and Version
+// 0, the artifact's latest version is used.
+type threadQuery struct {
+	Version     int
+	AllVersions bool
+	Resolved    *bool
+}
+
+func notFoundAs(err, replacement error) error {
+	if errors.Is(err, store.ErrNotFound) {
+		return replacement
+	}
+	return err
+}
+
+func newCommentID(prefix string) (string, error) {
+	id, err := securetoken.ID()
+	if err != nil {
+		return "", err
+	}
+	return prefix + id, nil
+}
+
+func commentAudit(iface string, details map[string]any) map[string]any {
+	if iface != "" {
+		details["interface"] = iface
+	}
+	return details
+}
+
+func (s *Server) threadForUser(ctx context.Context, user store.User, threadID string) (store.CommentThread, store.Artifact, error) {
+	t, err := s.db.CommentThread(ctx, threadID)
+	if err != nil {
+		return store.CommentThread{}, store.Artifact{}, notFoundAs(err, errCommentThreadNotFound)
+	}
+	a, err := s.db.ArtifactForUser(ctx, t.ArtifactID, user.ID)
+	if err != nil {
+		return store.CommentThread{}, store.Artifact{}, notFoundAs(err, errCommentThreadNotFound)
+	}
+	return t, a, nil
+}
+
+func (s *Server) commentForUser(ctx context.Context, user store.User, commentID string) (store.Comment, store.Artifact, error) {
+	c, err := s.db.Comment(ctx, commentID)
+	if err != nil {
+		return store.Comment{}, store.Artifact{}, notFoundAs(err, errCommentNotFound)
+	}
+	if c.DeletedAt != nil {
+		return store.Comment{}, store.Artifact{}, errCommentNotFound
+	}
+	_, a, err := s.threadForUser(ctx, user, c.ThreadID)
+	if errors.Is(err, errCommentThreadNotFound) {
+		return store.Comment{}, store.Artifact{}, errCommentNotFound
+	}
+	return c, a, err
+}
+
+func (s *Server) listCommentThreads(ctx context.Context, user store.User, artifactID string, q threadQuery) ([]threadView, error) {
+	a, err := s.db.ArtifactForUser(ctx, artifactID, user.ID)
+	if err != nil {
+		return nil, notFoundAs(err, errCommentArtifactNotFound)
+	}
+	filter := store.ThreadFilter{Version: q.Version, Resolved: q.Resolved}
+	if q.AllVersions {
+		filter.Version = 0
+	} else if filter.Version == 0 {
+		filter.Version = a.LatestVersion
+	}
+	threads, err := s.db.ListCommentThreads(ctx, a.ID, filter)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]threadView, 0, len(threads))
+	for _, t := range threads {
+		out = append(out, newThreadView(t, a, user))
+	}
+	return out, nil
+}
+
+func (s *Server) createCommentThread(ctx context.Context, user store.User, artifactID string, version int, rawAnchor json.RawMessage, body, iface string) (threadView, error) {
+	body, err := normalizeCommentBody(body)
+	if err != nil {
+		return threadView{}, err
+	}
+	anchor, err := validateAnchor(rawAnchor)
+	if err != nil {
+		return threadView{}, err
+	}
+	if version < 0 {
+		return threadView{}, commentInputError{"version must be a positive integer"}
+	}
+	a, err := s.db.ArtifactForUser(ctx, artifactID, user.ID)
+	if err != nil {
+		return threadView{}, notFoundAs(err, errCommentArtifactNotFound)
+	}
+	if version == 0 {
+		version = a.LatestVersion
+	}
+	threadID, err := newCommentID("ct_")
+	if err != nil {
+		return threadView{}, err
+	}
+	commentID, err := newCommentID("c_")
+	if err != nil {
+		return threadView{}, err
+	}
+	t, err := s.db.CreateCommentThread(ctx, store.NewCommentThread{ThreadID: threadID, CommentID: commentID, ArtifactID: a.ID, UserID: user.ID, Body: body, Version: version, Anchor: anchor})
+	if err != nil {
+		return threadView{}, notFoundAs(err, errCommentVersionNotFound)
+	}
+	s.auditContext(ctx, user.ID, "", a.ID, "comment.thread.create", commentAudit(iface, map[string]any{"thread_id": threadID, "comment_id": commentID, "version": version, "anchored": anchor != nil}))
+	return newThreadView(t, a, user), nil
+}
+
+func (s *Server) replyToCommentThread(ctx context.Context, user store.User, threadID, body, iface string) (commentView, error) {
+	body, err := normalizeCommentBody(body)
+	if err != nil {
+		return commentView{}, err
+	}
+	t, a, err := s.threadForUser(ctx, user, threadID)
+	if err != nil {
+		return commentView{}, err
+	}
+	commentID, err := newCommentID("c_")
+	if err != nil {
+		return commentView{}, err
+	}
+	c, err := s.db.AddComment(ctx, commentID, t.ID, user.ID, body)
+	if err != nil {
+		return commentView{}, notFoundAs(err, errCommentThreadNotFound)
+	}
+	s.auditContext(ctx, user.ID, "", a.ID, "comment.create", commentAudit(iface, map[string]any{"thread_id": t.ID, "comment_id": commentID}))
+	return newCommentView(c, a, user), nil
+}
+
+func (s *Server) editComment(ctx context.Context, user store.User, commentID, body, iface string) (commentView, error) {
+	body, err := normalizeCommentBody(body)
+	if err != nil {
+		return commentView{}, err
+	}
+	c, a, err := s.commentForUser(ctx, user, commentID)
+	if err != nil {
+		return commentView{}, err
+	}
+	if c.Author.ID != user.ID {
+		return commentView{}, errCommentForbidden
+	}
+	c, err = s.db.EditComment(ctx, c.ID, body)
+	if err != nil {
+		return commentView{}, notFoundAs(err, errCommentNotFound)
+	}
+	s.auditContext(ctx, user.ID, "", a.ID, "comment.edit", commentAudit(iface, map[string]any{"thread_id": c.ThreadID, "comment_id": c.ID}))
+	return newCommentView(c, a, user), nil
+}
+
+func (s *Server) deleteComment(ctx context.Context, user store.User, commentID, iface string) error {
+	c, a, err := s.commentForUser(ctx, user, commentID)
+	if err != nil {
+		return err
+	}
+	if c.Author.ID != user.ID && !canModerateComments(a) {
+		return errCommentForbidden
+	}
+	if err := s.db.DeleteComment(ctx, c.ID); err != nil {
+		return notFoundAs(err, errCommentNotFound)
+	}
+	s.auditContext(ctx, user.ID, "", a.ID, "comment.delete", commentAudit(iface, map[string]any{"thread_id": c.ThreadID, "comment_id": c.ID, "moderated": c.Author.ID != user.ID}))
+	return nil
+}
+
+func (s *Server) setCommentThreadResolved(ctx context.Context, user store.User, threadID string, resolved bool, iface string) (threadView, error) {
+	t, a, err := s.threadForUser(ctx, user, threadID)
+	if err != nil {
+		return threadView{}, err
+	}
+	if t.CreatedBy.ID != user.ID && !canModerateComments(a) {
+		return threadView{}, errCommentForbidden
+	}
+	t, err = s.db.SetThreadResolved(ctx, t.ID, user.ID, resolved)
+	if err != nil {
+		return threadView{}, notFoundAs(err, errCommentThreadNotFound)
+	}
+	action := "comment.thread.reopen"
+	if resolved {
+		action = "comment.thread.resolve"
+	}
+	s.auditContext(ctx, user.ID, "", a.ID, action, commentAudit(iface, map[string]any{"thread_id": t.ID}))
+	return newThreadView(t, a, user), nil
 }

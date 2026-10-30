@@ -141,6 +141,12 @@ func (s *Server) Handler() http.Handler {
 	mainMux.Handle("GET /api/v1/artifacts/{artifact}/shares", s.requireUser(http.HandlerFunc(s.listShares)))
 	mainMux.Handle("PUT /api/v1/artifacts/{artifact}/visibility", s.requireUser(http.HandlerFunc(s.setArtifactVisibility)))
 	mainMux.Handle("DELETE /api/v1/shares/{share}", s.requireUser(http.HandlerFunc(s.revokeShare)))
+	mainMux.Handle("GET /api/v1/artifacts/{artifact}/threads", s.requireUser(http.HandlerFunc(s.listCommentThreadsHTTP)))
+	mainMux.Handle("POST /api/v1/artifacts/{artifact}/threads", s.requireUser(http.HandlerFunc(s.createCommentThreadHTTP)))
+	mainMux.Handle("POST /api/v1/threads/{thread}/comments", s.requireUser(http.HandlerFunc(s.replyToCommentThreadHTTP)))
+	mainMux.Handle("PUT /api/v1/threads/{thread}/resolution", s.requireUser(http.HandlerFunc(s.setCommentThreadResolvedHTTP)))
+	mainMux.Handle("PATCH /api/v1/comments/{comment}", s.requireUser(http.HandlerFunc(s.editCommentHTTP)))
+	mainMux.Handle("DELETE /api/v1/comments/{comment}", s.requireUser(http.HandlerFunc(s.deleteCommentHTTP)))
 	mainMux.Handle("GET /api/v1/admin/artifacts", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminListArtifacts))))
 	mainMux.Handle("GET /api/v1/admin/branding", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminBranding))))
 	mainMux.Handle("PUT /api/v1/admin/branding", s.requireUser(s.requireAdmin(http.HandlerFunc(s.adminBranding))))
@@ -1111,7 +1117,11 @@ func uploadToken(r *http.Request) string {
 	return ""
 }
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	return decodeJSONLimit(w, r, v, 1<<20)
+}
+
+func decodeJSONLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
