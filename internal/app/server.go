@@ -159,6 +159,7 @@ func (s *Server) Handler() http.Handler {
 
 	contentMux := http.NewServeMux()
 	contentMux.HandleFunc("GET /healthz", s.health)
+	contentMux.HandleFunc("GET "+bridgeScriptPath, staticWebFile("web/bridge.js", "text/javascript; charset=utf-8"))
 	contentMux.HandleFunc("GET /t/{ticket}/{artifact}/{version}/{file...}", s.content)
 
 	return s.recoverer(s.requestMetadata(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
