@@ -358,6 +358,23 @@ type activateBrandingInput struct {
 	ThemeName string `json:"theme_name" jsonschema:"required,saved theme name"`
 }
 
+type listCommentsInput struct {
+	ArtifactID      string `json:"artifact_id" jsonschema:"required,artifact id"`
+	Version         int    `json:"version,omitempty" jsonschema:"artifact version; 0 lists threads from every version"`
+	IncludeResolved bool   `json:"include_resolved,omitempty" jsonschema:"also return resolved threads"`
+}
+type listCommentsOutput struct {
+	Threads []threadView `json:"threads"`
+}
+type replyCommentInput struct {
+	ThreadID string `json:"thread_id" jsonschema:"required,comment thread id"`
+	Body     string `json:"body" jsonschema:"required,plain-text reply (maximum 10000 characters)"`
+}
+type resolveCommentThreadInput struct {
+	ThreadID string `json:"thread_id" jsonschema:"required,comment thread id"`
+	Resolved bool   `json:"resolved" jsonschema:"required,true resolves the thread and false reopens it"`
+}
+
 func brandingForMCP(b store.Branding) brandingOutput {
 	return brandingOutput{ThemeName: b.ThemeName, SiteName: b.SiteName, Tagline: b.Tagline, HeroTitle: b.HeroTitle, HeroHighlight: b.HeroHighlight, HeroDescription: b.HeroDescription, BackgroundColor: b.BackgroundColor, PanelColor: b.PanelColor, TextColor: b.TextColor, MutedColor: b.MutedColor, PrimaryColor: b.PrimaryColor, AccentColor: b.AccentColor, HasLogo: b.HasLogo(), HasFavicon: b.HasFavicon()}
 }
@@ -499,6 +516,39 @@ func (s *Server) newMCPServer(user store.User) *mcp.Server {
 		}
 		s.auditContext(ctx, user.ID, "", artifactID, "share.revoke", map[string]any{"share_id": in.ShareID, "interface": "mcp"})
 		return textResult("Capability share revoked."), revokeShareOutput{ArtifactID: artifactID}, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_list_comments", Description: "List reviewer comment threads on an accessible artifact. Each thread includes its version, anchor (CSS selector and quoted text from the rendered page), and replies. Version 0 lists every version; resolved threads are omitted unless include_resolved is true.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in listCommentsInput) (*mcp.CallToolResult, listCommentsOutput, error) {
+		if in.Version < 0 {
+			return nil, listCommentsOutput{}, commentInputError{"version must be 0 or a positive integer"}
+		}
+		q := threadQuery{Version: in.Version, AllVersions: in.Version == 0}
+		if !in.IncludeResolved {
+			open := false
+			q.Resolved = &open
+		}
+		threads, err := s.listCommentThreads(ctx, user, in.ArtifactID, q)
+		if err != nil {
+			return nil, listCommentsOutput{}, err
+		}
+		return textResult(fmt.Sprintf("Found %d comment threads.", len(threads))), listCommentsOutput{Threads: threads}, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_reply_comment", Description: "Reply to a comment thread on an accessible artifact. Replies are plain text and attributed to the authenticated user.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in replyCommentInput) (*mcp.CallToolResult, commentView, error) {
+		c, err := s.replyToCommentThread(ctx, user, in.ThreadID, in.Body, "mcp")
+		if err != nil {
+			return nil, commentView{}, err
+		}
+		return textResult("Reply posted."), c, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "rendercase_resolve_comment_thread", Description: "Resolve or reopen a comment thread. Allowed for the thread author and the artifact owner or editors.", Annotations: mcpkit.Mutating(false, false)}, func(ctx context.Context, _ *mcp.CallToolRequest, in resolveCommentThreadInput) (*mcp.CallToolResult, threadView, error) {
+		t, err := s.setCommentThreadResolved(ctx, user, in.ThreadID, in.Resolved, "mcp")
+		if err != nil {
+			return nil, threadView{}, err
+		}
+		text := "Thread reopened."
+		if in.Resolved {
+			text = "Thread resolved."
+		}
+		return textResult(text), t, nil
 	})
 	if user.Admin {
 		mcp.AddTool(server, &mcp.Tool{Name: "rendercase_admin_get_branding", Description: "Get the instance-wide name, messaging, color theme, logo, and favicon status. Administrator access required; binary image data is omitted.", Annotations: mcpkit.ReadOnly(false)}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listInput) (*mcp.CallToolResult, brandingOutput, error) {
