@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"log/slog"
 	"mime"
 	"net"
@@ -590,7 +591,7 @@ func (s *Server) sharedViewer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderViewer(r *http.Request, w http.ResponseWriter, v store.Version, artifact store.Artifact, user *store.User, canShare bool) {
-	subject := v.ArtifactID + ":" + strconv.Itoa(v.Version)
+	subject := contentTicketSubject(v.ArtifactID, v.Version, user != nil)
 	ticket := securetoken.Sign(s.cfg.CookieSecret, subject, time.Now().Add(s.cfg.ViewerTicketTTL))
 	source := strings.TrimRight(s.cfg.ContentURL.String(), "/") + "/t/" + ticket + "/" + url.PathEscape(v.ArtifactID) + "/" + strconv.Itoa(v.Version) + "/" + escapePath(v.Entrypoint)
 	branding, err := s.branding(r.Context())
@@ -735,7 +736,8 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	subject, _, err := securetoken.Verify(s.cfg.CookieSecret, r.PathValue("ticket"), time.Now())
-	if err != nil || subject != artifactID+":"+strconv.Itoa(version) {
+	allowed, comments := ticketAllows(subject, artifactID, version)
+	if err != nil || !allowed {
 		http.NotFound(w, r)
 		return
 	}
@@ -763,6 +765,24 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "private, max-age=300")
+	if comments && strings.HasPrefix(ctype, "text/html") && object.Size >= 0 && object.Size <= maxBridgeInjectBytes {
+		doc, err := io.ReadAll(io.LimitReader(object.Body, maxBridgeInjectBytes+1))
+		if err != nil {
+			s.log.Error("read artifact HTML", "artifact", artifactID, "version", version, "file", name, "error", err)
+			http.Error(w, "artifact unavailable", http.StatusInternalServerError)
+			return
+		}
+		if len(doc) <= maxBridgeInjectBytes {
+			// The modified document is served whole; Range applies only to stored bytes.
+			body := injectBridge(doc)
+			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+			return
+		}
+		http.Error(w, "artifact unavailable", http.StatusInternalServerError)
+		return
+	}
 	http.ServeContent(w, r, name, object.LastModified, object.Body)
 }
 
