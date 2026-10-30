@@ -37,12 +37,21 @@ func TestValidateAnchor(t *testing.T) {
 	valid := []string{
 		`{"selector":"main > p:nth-of-type(2)"}`,
 		`{"selector":"#intro","quote":{"exact":"Hello","prefix":"Say","suffix":"world"},"point":{"x":0,"y":1}}`,
+		`{"selector":"p","page":"docs/page 2.html"}`,
+		`{"selector":"p","page":"` + strings.Repeat("a", 512) + `"}`,
 	}
 	for _, raw := range valid {
 		got, err := validateAnchor(json.RawMessage(raw))
 		if err != nil || got == nil {
 			t.Errorf("%s: %s, %v", raw, got, err)
 		}
+	}
+	got, err := validateAnchor(json.RawMessage(`{"selector":"p","page":"sub/two.html"}`))
+	if err != nil || string(got) != `{"selector":"p","page":"sub/two.html"}` {
+		t.Errorf("page round trip: %s, %v", got, err)
+	}
+	if got, err := validateAnchor(json.RawMessage(`{"selector":"p","page":""}`)); err != nil || strings.Contains(string(got), "page") {
+		t.Errorf("empty page: %s, %v", got, err)
 	}
 	for _, raw := range []string{"", "null"} {
 		if got, err := validateAnchor(json.RawMessage(raw)); err != nil || got != nil {
@@ -61,6 +70,11 @@ func TestValidateAnchor(t *testing.T) {
 		`{"selector":"p","point":{"x":1.5,"y":0}}`,
 		`{"selector":"p","point":{"x":-0.1,"y":0}}`,
 		`{"selector":"p"} {"selector":"q"}`,
+		`{"selector":"p","page":"` + strings.Repeat("a", 513) + `"}`,
+		`{"selector":"p","page":"page\n2.html"}`,
+		`{"selector":"p","page":"a\u007f.html"}`,
+		`{"selector":"p","page":"a\u0000b"}`,
+		`{"selector":"p","page":7}`,
 		`[1]`,
 	}
 	for _, raw := range invalid {
