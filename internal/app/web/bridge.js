@@ -2,7 +2,7 @@
   'use strict';
   if(window.parent===window||window.__rendercaseBridge)return;
   window.__rendercaseBridge=true;
-  var parentOrigin=null,picking=false,pins=[],host=null,root=null,outline=null,frame=0,observer=null;
+  var parentOrigin=null,picking=false,pins=[],host=null,root=null,outline=null,frame=0,observer=null,gen=0,lastUnanchored=null,checkTimer=0;
   function send(type,data){if(!parentOrigin)return;var m=data||{};m.rc=1;m.type=type;window.parent.postMessage(m,parentOrigin)}
   function norm(v){return String(v||'').replace(/\s+/g,' ').trim()}
   function clamp(v){return Math.min(1,Math.max(0,Math.round(v*1000)/1000))}
@@ -21,6 +21,12 @@
   }
 
   function byteLen(v){return new TextEncoder().encode(v).length}
+  // The bundle file this page was served as: the path after /t/{ticket}/{artifact}/{version}/.
+  var page=(function(){
+    var s=location.pathname.split('/'),out='';if(s[1]!=='t'||s.length<6)return '';
+    try{out=s.slice(5).map(decodeURIComponent).join('/')}catch(_){return ''}
+    return out&&byteLen(out)<=512&&!/[\u0000-\u001f\u007f]/.test(out)?out:'';
+  })();
   function selectorFor(el){
     var parts=[],own=null;
     while(el&&el.nodeType===1&&el!==document.body&&el!==document.documentElement){
@@ -63,6 +69,7 @@
       if(!anchor)anchor=elementAnchor(e.target,e.clientX,e.clientY);
     }
     stopPick();
+    if(anchor&&page)anchor.page=page;
     if(anchor)send('picked',{anchor:anchor});
     else send('pick-cancelled');
   }
@@ -91,28 +98,59 @@
   function place(){
     frame=0;
     pins.forEach(function(p){
+      if(!p.node)return;
       var r=p.el.getBoundingClientRect(),pt=p.point||{x:0,y:0},hidden=!p.el.isConnected||(r.width===0&&r.height===0);
       p.node.style.display=hidden?'none':'';p.node.style.left=(r.left+r.width*pt.x)+'px';p.node.style.top=(r.top+r.height*pt.y)+'px';
     });
   }
   function schedule(){if(!frame)frame=requestAnimationFrame(place)}
+  function pinNode(n,resolved){
+    var b=document.createElement('button');b.type='button';b.className='pin'+(resolved?' resolved':'');b.textContent=String(n);
+    b.addEventListener('click',function(e){e.stopPropagation();send('pin-click',{n:n})});
+    root.append(b);return b;
+  }
+  function attach(p){
+    var hit=resolve(p.anchor);
+    if(hit){p.el=hit.el;p.point=hit.point;if(!p.node)p.node=pinNode(p.n,p.resolved)}
+    else{p.el=null;if(p.node){p.node.remove();p.node=null}}
+  }
+  function report(force){
+    var un=[];pins.forEach(function(p){if(!p.el)un.push(p.n)});
+    var key=un.join(',');if(!force&&key===lastUnanchored)return;
+    lastUnanchored=key;send('anchors',{gen:gen,unanchored:un});
+  }
   function setPins(list){
     ensureHost();
-    pins.forEach(function(p){p.node.remove()});pins=[];
-    var unanchored=[];
+    pins.forEach(function(p){if(p.node)p.node.remove()});pins=[];
     list.slice(0,500).forEach(function(p){
-      var n=Number(p&&p.n);if(!(n>0))return;
-      var hit=resolve(p.anchor);if(!hit){unanchored.push(n);return}
-      var b=document.createElement('button');b.type='button';b.className='pin'+(p.resolved?' resolved':'');b.textContent=String(n);
-      b.addEventListener('click',function(e){e.stopPropagation();send('pin-click',{n:n})});
-      root.append(b);pins.push({n:n,el:hit.el,point:hit.point,node:b});
+      var n=p&&p.n;if(!Number.isInteger(n)||n<=0)return;
+      var a=p.anchor;if(a&&typeof a.page==='string'&&a.page&&a.page!==page)return;
+      var pin={n:n,anchor:a,resolved:!!p.resolved,el:null,point:null,node:null};attach(pin);pins.push(pin);
     });
-    place();send('anchors',{unanchored:unanchored});
+    place();report(true);
+  }
+  // Script-rendered artifacts can build or replace the DOM after load: re-attach the
+  // host if it was removed and retry pins that are unanchored or lost their element.
+  function recheck(){
+    checkTimer=0;if(!host||pendingPins)return;
+    if(!host.isConnected)(document.body||document.documentElement).appendChild(host);
+    pins.forEach(function(p){if(!p.el||!p.el.isConnected)attach(p)});
+    place();report(false);
+  }
+  function ownMutation(r){
+    if(r.type!=='childList')return false;
+    var nodes=Array.prototype.slice.call(r.addedNodes).concat(Array.prototype.slice.call(r.removedNodes));
+    return nodes.length>0&&nodes.every(function(n){return n===host});
+  }
+  function onMutate(records){
+    schedule();
+    if(records.every(ownMutation))return;
+    if(!checkTimer)checkTimer=setTimeout(recheck,250);
   }
   var pendingPins=null;
   function applyPending(){var l=pendingPins;pendingPins=null;if(l)setPins(l)}
   function focusPin(n){
-    pins.forEach(function(p){p.node.classList.toggle('focus',p.n===n);if(p.n===n&&p.el.scrollIntoView)p.el.scrollIntoView({block:'center',behavior:'smooth'})});
+    pins.forEach(function(p){if(!p.node)return;p.node.classList.toggle('focus',p.n===n);if(p.n===n&&p.el.scrollIntoView)p.el.scrollIntoView({block:'center',behavior:'smooth'})});
     schedule();
   }
 
@@ -121,14 +159,14 @@
     var m=e.data;
     if(m.type==='enable'){
       parentOrigin=e.origin;ensureHost();
-      if(!observer&&window.MutationObserver){observer=new MutationObserver(schedule);observer.observe(document.documentElement,{subtree:true,childList:true,attributes:true,characterData:true})}
+      if(!observer&&window.MutationObserver){observer=new MutationObserver(onMutate);observer.observe(document.documentElement,{subtree:true,childList:true,attributes:true,characterData:true})}
       send('enabled');return;
     }
     if(e.origin!==parentOrigin)return;
     if(m.type==='pick')startPick();
     else if(m.type==='cancel-pick')stopPick();
     else if(m.type==='pins'){
-      var list=Array.isArray(m.pins)?m.pins:[];
+      var list=Array.isArray(m.pins)?m.pins:[];if(Number.isInteger(m.gen))gen=m.gen;
       if(document.readyState==='loading'){if(!pendingPins)document.addEventListener('DOMContentLoaded',applyPending,{once:true});pendingPins=list}
       else{pendingPins=null;setPins(list)}
     }

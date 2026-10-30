@@ -161,7 +161,8 @@ Parent → bridge (target origin `'*'`):
 
 - `enable` — start listening; the bridge stays inert until it arrives.
 - `pick` / `cancel-pick` — enter or leave pick mode.
-- `pins` — `{pins: [{n, anchor, resolved}]}` where `n` is the display number.
+- `pins` — `{gen, pins: [{n, anchor, resolved}]}` where `n` is the display
+  number and `gen` an integer the parent increments on every `pins` message.
   No comment bodies, author names, or thread ids are sent.
 - `focus` — `{n}`: scroll to and highlight that pin.
 
@@ -170,10 +171,16 @@ Bridge → parent (target origin: the origin of the `enable` message, except
 
 - `ready` — sent once when the bridge loads.
 - `enabled` — reply to `enable`.
-- `picked` — `{anchor}` from a click or text selection in pick mode.
+- `picked` — `{anchor}` from a click or text selection in pick mode. The
+  bridge adds its own `page` to the anchor. The parent ignores `picked`
+  unless it started a pick, and opening the composer over an open draft keeps
+  the draft and replaces only the anchor.
 - `pick-cancelled` — Escape pressed inside the frame while picking.
 - `pin-click` — `{n}`.
-- `anchors` — `{unanchored: [n, ...]}` after placing pins.
+- `anchors` — `{gen, unanchored: [n, ...]}` after placing pins, echoing the
+  `gen` of the last `pins` message. The parent ignores an `anchors` whose `gen`
+  is not its current one, and re-renders the sidebar only when the unanchored
+  set changes, so focus and open reply or edit forms survive.
 
 ### Behaviour
 
@@ -187,6 +194,13 @@ Bridge → parent (target origin: the origin of the `enable` message, except
 - Pins are absolutely positioned elements inside a shadow root attached to a
   bridge-owned host element. Positions update on scroll and resize via
   `requestAnimationFrame`.
+- Pins for anchors whose `page` differs from the current page are skipped:
+  not drawn and not reported unanchored.
+- DOM mutations (other than the bridge re-appending its own host) schedule a
+  check at most every 250 ms. It re-appends the host if the artifact removed
+  it, retries pins that are unanchored or whose element left the document,
+  and sends `anchors` only when the unanchored set changes. This covers
+  artifacts that render with script after `DOMContentLoaded`.
 
 ### Trust model
 
@@ -256,7 +270,8 @@ All routes are on the management origin behind `requireUser`.
   sidebar to that thread.
 - Filters: open or resolved, and this version or all versions. Threads from
   earlier versions show a `vN` tag, and their anchors are included in `pins`
-  so they re-attach to the current version when possible.
+  so they re-attach to the current version when possible. Anchors with a
+  `page` show the page name as a tag.
 - Unanchored threads list under an **Unanchored** heading.
 - All user content is rendered with `textContent`; times use
   `toLocaleString`, as in the sharing dialog.
