@@ -82,12 +82,13 @@ func TestCommentThreadLifecycleIntegration(t *testing.T) {
 		t.Fatalf("resolve = %+v, %v", resolved, err)
 	}
 	for _, tc := range []struct {
+		name   string
 		filter *bool
 		want   int
-	}{{&open, 0}, {&closed, 1}, {nil, 1}} {
+	}{{"open", &open, 0}, {"resolved", &closed, 1}, {"both", nil, 1}} {
 		got, err := db.ListCommentThreads(ctx, a.ID, store.ThreadFilter{Resolved: tc.filter})
 		if err != nil || len(got) != tc.want {
-			t.Fatalf("filter %v: %d threads, %v", tc.filter, len(got), err)
+			t.Fatalf("filter %s: %d threads, %v", tc.name, len(got), err)
 		}
 	}
 	reopened, err := db.SetThreadResolved(ctx, "ct_1", owner.ID, false)
@@ -187,5 +188,67 @@ func TestCommentLimitIntegration(t *testing.T) {
 	}
 	if _, err := db.CreateCommentThread(ctx, store.NewCommentThread{ThreadID: "ct_2", CommentID: "c_2", ArtifactID: a.ID, Version: 1, UserID: owner.ID, Body: "note"}); !errors.Is(err, store.ErrCommentLimit) {
 		t.Fatalf("thread over limit: %v", err)
+	}
+}
+
+// storeSnapshot captures every comment and thread row so a test can prove a
+// rejected call changed nothing.
+func storeSnapshot(t *testing.T, db *store.DB) string {
+	t.Helper()
+	var s string
+	err := db.Pool.QueryRow(t.Context(), `SELECT (SELECT coalesce(string_agg(row_to_json(c)::text,'|' ORDER BY c.id),'') FROM comments c)
+		|| ' # ' || (SELECT coalesce(string_agg(row_to_json(t)::text,'|' ORDER BY t.id),'') FROM comment_threads t)`).Scan(&s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestHiddenCommentsAreImmutableIntegration(t *testing.T) {
+	db := testdb.New(t)
+	ctx := t.Context()
+	owner := commentUser(t, db, "owner")
+	a := commentVersion(t, db, owner, "v1", "")
+	if _, err := db.CreateCommentThread(ctx, store.NewCommentThread{ThreadID: "ct_1", CommentID: "c_1", ArtifactID: a.ID, Version: 1, UserID: owner.ID, Body: "note"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE artifacts SET deleted_at=now() WHERE id=$1`, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	before := storeSnapshot(t, db)
+	if _, err := db.EditComment(ctx, "c_1", "changed"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("edit hidden: %v", err)
+	}
+	if err := db.DeleteComment(ctx, "c_1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("delete hidden: %v", err)
+	}
+	if _, err := db.SetThreadResolved(ctx, "ct_1", owner.ID, true); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("resolve hidden: %v", err)
+	}
+	if after := storeSnapshot(t, db); after != before {
+		t.Fatalf("hidden rows changed:\nbefore %s\nafter  %s", before, after)
+	}
+}
+
+func TestFullyDeletedThreadCannotBeRevivedIntegration(t *testing.T) {
+	db := testdb.New(t)
+	ctx := t.Context()
+	owner := commentUser(t, db, "owner")
+	a := commentVersion(t, db, owner, "v1", "")
+	if _, err := db.CreateCommentThread(ctx, store.NewCommentThread{ThreadID: "ct_1", CommentID: "c_1", ArtifactID: a.ID, Version: 1, UserID: owner.ID, Body: "note"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteComment(ctx, "c_1"); err != nil {
+		t.Fatal(err)
+	}
+	before := storeSnapshot(t, db)
+	if _, err := db.AddComment(ctx, "c_2", "ct_1", owner.ID, "revive"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("reply to hidden thread: %v", err)
+	}
+	if _, err := db.SetThreadResolved(ctx, "ct_1", owner.ID, true); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("resolve hidden thread: %v", err)
+	}
+	if after := storeSnapshot(t, db); after != before {
+		t.Fatalf("hidden thread changed:\nbefore %s\nafter  %s", before, after)
 	}
 }
