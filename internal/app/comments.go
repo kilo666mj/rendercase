@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -227,6 +228,9 @@ func (s *Server) commentForUser(ctx context.Context, user store.User, commentID 
 }
 
 func (s *Server) listCommentThreads(ctx context.Context, user store.User, artifactID string, q threadQuery) ([]threadView, error) {
+	if q.Version < 0 || q.Version > math.MaxInt32 {
+		return nil, commentInputError{"version must be a positive integer or all"}
+	}
 	a, err := s.db.ArtifactForUser(ctx, artifactID, user.ID)
 	if err != nil {
 		return nil, notFoundAs(err, errCommentArtifactNotFound)
@@ -257,7 +261,7 @@ func (s *Server) createCommentThread(ctx context.Context, user store.User, artif
 	if err != nil {
 		return threadView{}, err
 	}
-	if version < 0 {
+	if version < 0 || version > math.MaxInt32 {
 		return threadView{}, commentInputError{"version must be a positive integer"}
 	}
 	a, err := s.db.ArtifactForUser(ctx, artifactID, user.ID)
