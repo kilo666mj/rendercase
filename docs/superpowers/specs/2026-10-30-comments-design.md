@@ -135,8 +135,9 @@ Every mutation writes an audit event with ids only, never comment bodies:
   `<head ...>` tag. If there is no `<head>`, the script goes after the
   `<html ...>` tag; if there is no `<html>` either, after the doctype; if there
   is no doctype, at the start of the file. Matching is case-insensitive and
-  scans only the first 64 KiB; a tag that appears inside an HTML comment in
-  that range can be matched, which at worst places the script slightly early.
+  scans only the first 64 KiB. Tags inside `<!-- ... -->` comments in that
+  range are skipped; an unterminated comment hides everything after its
+  start, so the search falls through to the next rule.
 - Injected responses ignore `Range` and are served whole with a recomputed
   `Content-Length`. All other responses keep the current `http.ServeContent`
   streaming path unchanged, so share views remain byte-identical to the bundle.
