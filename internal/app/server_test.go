@@ -385,3 +385,72 @@ func TestValidateShareOptions(t *testing.T) {
 		}
 	}
 }
+
+func TestViewerShowsCommentsOnlyToSignedInViewers(t *testing.T) {
+	tpl, err := template.ParseFS(webFS, "web/*.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := map[string]any{
+		"User":          &store.User{DisplayName: "Viewer"},
+		"Version":       store.Version{ArtifactID: "a_example", Version: 3, Title: "Example"},
+		"Artifact":      store.Artifact{Visibility: "private"},
+		"ContentSource": "https://content.example/t/ticket/a_example/3/index.html",
+		"ContentOrigin": "https://content.example",
+		"CanShare":      false,
+		"Comments":      true,
+	}
+	var rendered bytes.Buffer
+	if err := tpl.ExecuteTemplate(&rendered, "viewer", data); err != nil {
+		t.Fatal(err)
+	}
+	for _, wanted := range []string{`id="comments-open"`, `id="comments-panel"`, `data-artifact="a_example"`, `data-version="3"`, `data-content-origin="https://content.example"`, `src="/static/comments.js"`, `id="comment-pick"`, `Comment on whole version`} {
+		if !strings.Contains(rendered.String(), wanted) {
+			t.Errorf("signed-in viewer missing %q", wanted)
+		}
+	}
+	if strings.Contains(rendered.String(), `id="share-open"`) {
+		t.Error("sharing controls rendered for a non-owner")
+	}
+	data["Comments"] = false
+	data["User"] = nil
+	rendered.Reset()
+	if err := tpl.ExecuteTemplate(&rendered, "viewer", data); err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{`comments-panel`, `comments.js`, `comments-open`} {
+		if strings.Contains(rendered.String(), unwanted) {
+			t.Errorf("share viewer contains %q", unwanted)
+		}
+	}
+}
+
+func TestCommentsScriptBuildsDOMSafely(t *testing.T) {
+	source, err := webFS.ReadFile("web/comments.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, forbidden := range []string{"innerHTML", "insertAdjacentHTML", "document.write", "eval("} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("comments.js contains %q", forbidden)
+		}
+	}
+	for _, required := range []string{"e.source===frame.contentWindow", "e.origin==='null'", "n.textContent=text"} {
+		if !strings.Contains(text, required) {
+			t.Errorf("comments.js missing %q", required)
+		}
+	}
+}
+
+func TestCommentsScriptRoute(t *testing.T) {
+	s := &Server{cfg: config.Config{
+		PublicURL:  mustParseURL(t, "https://rendercase.example/"),
+		ContentURL: mustParseURL(t, "https://content.rendercase.example/"),
+	}, mcp: http.NotFoundHandler()}
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "https://rendercase.example/static/comments.js", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "text/javascript; charset=utf-8" {
+		t.Fatalf("comments.js: %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+}
