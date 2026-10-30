@@ -75,6 +75,7 @@ CREATE INDEX IF NOT EXISTS comments_thread_idx ON comments(thread_id, created_at
 ```json
 {
   "selector": "main > section:nth-of-type(2) > p:nth-of-type(1)",
+  "page": "guide/setup.html",
   "quote": {"exact": "selected text", "prefix": "up to 32 chars", "suffix": "up to 32 chars"},
   "point": {"x": 0.42, "y": 0.18}
 }
@@ -82,6 +83,12 @@ CREATE INDEX IF NOT EXISTS comments_thread_idx ON comments(thread_id, created_at
 
 - `selector`: at most 512 bytes, built by the bridge from the target element up
   to the nearest element with a unique `id`, or to `body`.
+- `page`: optional. The bundle file the anchor was picked on: the frame URL
+  path after `/t/{ticket}/{artifact}/{version}/`, URL-decoded. At most 512
+  bytes of printable text. Every HTML file in a bundle gets the bridge, so the
+  bridge only places pins whose `page` is absent or equals its own page; pins
+  for other pages are neither shown nor reported unanchored. The sidebar shows
+  the page name as a tag.
 - `quote`: optional. `exact` at most 500 characters, `prefix` and `suffix` at
   most 32 each. Present when the reviewer selected text; otherwise the
   element's leading text (trimmed, at most 120 characters) for verification.
