@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const MaxCommentsPerArtifact = 2000
@@ -137,7 +138,9 @@ func (d *DB) AddComment(ctx context.Context, commentID, threadID, userID, body s
 	}
 	defer rollbackTransaction(ctx, tx, &err)
 	var artifactID string
-	if err = tx.QueryRow(ctx, `SELECT artifact_id FROM comment_threads WHERE id=$1`, threadID).Scan(&artifactID); err != nil {
+	// A thread with no live comment is hidden, so it cannot be revived by a reply.
+	if err = tx.QueryRow(ctx, `SELECT t.artifact_id FROM comment_threads t WHERE t.id=$1
+		AND EXISTS (SELECT 1 FROM comments c WHERE c.thread_id=t.id AND c.deleted_at IS NULL)`, threadID).Scan(&artifactID); err != nil {
 		return Comment{}, translate(err)
 	}
 	if err = lockCommentQuota(ctx, tx, artifactID); err != nil {
@@ -220,8 +223,12 @@ func (d *DB) Comment(ctx context.Context, commentID string) (Comment, error) {
 		WHERE c.id=$1`, commentID))
 }
 
+// visibleComment matches a live comment whose thread and artifact are visible.
+const visibleComment = `c.deleted_at IS NULL AND EXISTS (SELECT 1 FROM comment_threads t
+	JOIN artifacts a ON a.id=t.artifact_id AND a.deleted_at IS NULL WHERE t.id=c.thread_id)`
+
 func (d *DB) EditComment(ctx context.Context, commentID, body string) (Comment, error) {
-	ct, err := d.Pool.Exec(ctx, `UPDATE comments SET body=$2,edited_at=now() WHERE id=$1 AND deleted_at IS NULL`, commentID, body)
+	ct, err := d.Pool.Exec(ctx, `UPDATE comments c SET body=$2,edited_at=now() WHERE c.id=$1 AND `+visibleComment, commentID, body)
 	if err != nil {
 		return Comment{}, err
 	}
@@ -232,7 +239,7 @@ func (d *DB) EditComment(ctx context.Context, commentID, body string) (Comment, 
 }
 
 func (d *DB) DeleteComment(ctx context.Context, commentID string) error {
-	ct, err := d.Pool.Exec(ctx, `UPDATE comments SET body='',deleted_at=now() WHERE id=$1 AND deleted_at IS NULL`, commentID)
+	ct, err := d.Pool.Exec(ctx, `UPDATE comments c SET body='',deleted_at=now() WHERE c.id=$1 AND `+visibleComment, commentID)
 	if err != nil {
 		return err
 	}
@@ -242,15 +249,24 @@ func (d *DB) DeleteComment(ctx context.Context, commentID string) error {
 	return nil
 }
 
+// SetThreadResolved changes only threads that are visible: the artifact is
+// active and at least one comment is live. RowsAffected counts matched rows,
+// so resolving an already-resolved visible thread still succeeds.
 func (d *DB) SetThreadResolved(ctx context.Context, threadID, userID string, resolved bool) (CommentThread, error) {
+	const visible = `WHERE t.id=$1 AND EXISTS (SELECT 1 FROM artifacts a WHERE a.id=t.artifact_id AND a.deleted_at IS NULL)
+		AND EXISTS (SELECT 1 FROM comments c WHERE c.thread_id=t.id AND c.deleted_at IS NULL)`
+	var ct pgconn.CommandTag
 	var err error
 	if resolved {
-		_, err = d.Pool.Exec(ctx, `UPDATE comment_threads SET resolved_at=COALESCE(resolved_at,now()),resolved_by=COALESCE(resolved_by,$2) WHERE id=$1`, threadID, userID)
+		ct, err = d.Pool.Exec(ctx, `UPDATE comment_threads t SET resolved_at=COALESCE(t.resolved_at,now()),resolved_by=COALESCE(t.resolved_by,$2) `+visible, threadID, userID)
 	} else {
-		_, err = d.Pool.Exec(ctx, `UPDATE comment_threads SET resolved_at=NULL,resolved_by=NULL WHERE id=$1`, threadID)
+		ct, err = d.Pool.Exec(ctx, `UPDATE comment_threads t SET resolved_at=NULL,resolved_by=NULL `+visible, threadID)
 	}
 	if err != nil {
 		return CommentThread{}, err
+	}
+	if ct.RowsAffected() != 1 {
+		return CommentThread{}, ErrNotFound
 	}
 	return d.CommentThread(ctx, threadID)
 }
