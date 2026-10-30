@@ -123,6 +123,7 @@ func (s *Server) Handler() http.Handler {
 	mainMux.HandleFunc("GET /static/style.css", s.style)
 	mainMux.HandleFunc("GET /static/viewer.js", staticWebFile("web/viewer.js", "text/javascript; charset=utf-8"))
 	mainMux.HandleFunc("GET /static/admin.js", staticWebFile("web/admin.js", "text/javascript; charset=utf-8"))
+	mainMux.HandleFunc("GET /static/comments.js", staticWebFile("web/comments.js", "text/javascript; charset=utf-8"))
 	mainMux.HandleFunc("GET /auth/login", s.login)
 	mainMux.HandleFunc("GET /api/v1/auth/oidc/callback", s.callback)
 	mainMux.Handle("POST /auth/logout", s.requireUser(http.HandlerFunc(s.logout)))
@@ -599,7 +600,8 @@ func (s *Server) renderViewer(r *http.Request, w http.ResponseWriter, v store.Ve
 		s.fail(w, r, err)
 		return
 	}
-	_ = s.tpl.ExecuteTemplate(w, "viewer", map[string]any{"User": user, "Version": v, "Artifact": artifact, "ContentSource": source, "CanShare": canShare, "Branding": branding})
+	contentOrigin := s.cfg.ContentURL.Scheme + "://" + s.cfg.ContentURL.Host
+	_ = s.tpl.ExecuteTemplate(w, "viewer", map[string]any{"User": user, "Version": v, "Artifact": artifact, "ContentSource": source, "ContentOrigin": contentOrigin, "CanShare": canShare, "Comments": user != nil, "Branding": branding})
 }
 
 var brandColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
