@@ -95,6 +95,12 @@ func TestInjectBridgePlacement(t *testing.T) {
 		{"bom fragment", "\uFEFF<p>x</p>", "\uFEFF" + tag + "<p>x</p>"},
 		{"multibyte before head", "<!-- İİİ ünïcode --><head><title>x", "<!-- İİİ ünïcode --><head>" + tag + "<title>x"},
 		{"unterminated head", "<html><head", "<html>" + tag + "<head"},
+		{"head inside comment", "<!-- <head> --><html><head><title>x", "<!-- <head> --><html><head>" + tag + "<title>x"},
+		{"only commented head", "<!-- <head> --><html><p>x", "<!-- <head> --><html>" + tag + "<p>x"},
+		{"only commented tags", "<!doctype html><!-- <head><html> --><p>x", "<!doctype html>" + tag + "<!-- <head><html> --><p>x"},
+		{"commented fragment", "<!-- <head> --><p>x", tag + "<!-- <head> --><p>x"},
+		{"unterminated comment", "<html><!-- <head><p>x", "<html>" + tag + "<!-- <head><p>x"},
+		{"head attribute with gt", "<!-- a --><head data-x=\"1\"><title>x", "<!-- a --><head data-x=\"1\">" + tag + "<title>x"},
 	} {
 		if got := string(injectBridge([]byte(tc.in))); got != tc.want {
 			t.Errorf("%s:\n got %q\nwant %q", tc.name, got, tc.want)
