@@ -145,7 +145,11 @@ Every mutation writes an audit event with ids only, never comment bodies:
 
 All messages are `{rc: 1, type, ...}` objects sent with `postMessage`.
 
-Parent → bridge (target origin: the content origin):
+The iframe is sandboxed without `allow-same-origin`, so its origin is opaque
+(`"null"`). The parent therefore posts to the frame with target origin `'*'`,
+and the bridge learns the management origin from the `enable` message.
+
+Parent → bridge (target origin `'*'`):
 
 - `enable` — start listening; the bridge stays inert until it arrives.
 - `pick` / `cancel-pick` — enter or leave pick mode.
@@ -153,10 +157,13 @@ Parent → bridge (target origin: the content origin):
   No comment bodies, author names, or thread ids are sent.
 - `focus` — `{n}`: scroll to and highlight that pin.
 
-Bridge → parent (target origin: the management origin):
+Bridge → parent (target origin: the origin of the `enable` message, except
+`ready`, which carries no data and uses `'*'`):
 
-- `ready` — sent after load and after `enable`.
+- `ready` — sent once when the bridge loads.
+- `enabled` — reply to `enable`.
 - `picked` — `{anchor}` from a click or text selection in pick mode.
+- `pick-cancelled` — Escape pressed inside the frame while picking.
 - `pin-click` — `{n}`.
 - `anchors` — `{unanchored: [n, ...]}` after placing pins.
 
@@ -178,7 +185,8 @@ Bridge → parent (target origin: the management origin):
 - The artifact's own scripts share the bridge's origin and can impersonate it
   or tamper with pins. The design accepts that and limits what they can gain:
   - The parent accepts a message only when `event.source` is the iframe's
-    `contentWindow` and `event.origin` is the content origin. It validates
+    `contentWindow` and `event.origin` is `"null"` (the sandboxed frame) or
+    the content origin. It validates
     every field against the anchor limits above and drops anything else.
   - Comment text is only typed into the trusted parent page and only sent
     to the management API by the parent.
@@ -207,7 +215,8 @@ All routes are on the management origin behind `requireUser`.
   (`{id, display_name}`), `created_at`, `resolved_at`, `resolved_by`, and
   `comments`. Each comment has `id`, `author`, `body`, `created_at`,
   `edited_at`, `deleted`, plus `can_edit` and `can_delete` for the caller.
-  The thread also carries `can_resolve`.
+  The thread also carries `can_resolve`. Null fields (`anchor`, `edited_at`,
+  `resolved_at`, `resolved_by`) are omitted.
 - Creating a thread on a version that does not exist returns `404`.
 - Errors use the existing JSON `{error}` shape.
 
@@ -248,7 +257,9 @@ All routes are on the management origin behind `requireUser`.
 
 - `internal/store/comments.go`: types and queries, following
   `publisher_viewers.go`.
-- `internal/app/comments.go`: REST handlers, validation, and permission checks.
+- `internal/app/comments.go`: validation, view types, and permission-checked
+  operations shared by REST and MCP.
+- `internal/app/comments_http.go`: REST handlers.
 - `internal/app/bridge.go`: HTML injection helper and the `/_rc/bridge.js`
   route.
 - `internal/app/web/bridge.js` and `internal/app/web/comments.js`.
