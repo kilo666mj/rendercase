@@ -27,7 +27,7 @@
   function sendPins(){
     if(!bridgeReady)return;
     var pins=[];
-    if(isOpen())threads.forEach(function(t,i){if(t.anchor)pins.push({n:i+1,anchor:t.anchor,resolved:!!t.resolved_at})});
+    threads.forEach(function(t,i){if(t.anchor)pins.push({n:i+1,anchor:t.anchor,resolved:!!t.resolved_at})});
     pinGen++;toFrame('pins',{gen:pinGen,pins:pins});
   }
   function setPicking(on){picking=on;pick.textContent=on?'Click an element… (Esc cancels)':'Add comment';pick.setAttribute('aria-pressed',on?'true':'false')}
@@ -179,5 +179,5 @@
   });
   frame.addEventListener('load',function(){bridgeReady=false;pick.disabled=true;setPicking(false);toFrame('enable')});
   pick.disabled=true;pick.title='Inline comments are available once the artifact loads. HTML pages over 5 MiB support whole-version comments only.';
-  toFrame('enable');refreshCount();
+  toFrame('enable');refreshCount();loaded=true;load();
 })();
