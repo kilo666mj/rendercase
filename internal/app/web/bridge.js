@@ -2,7 +2,7 @@
   'use strict';
   if(window.parent===window||window.__rendercaseBridge)return;
   window.__rendercaseBridge=true;
-  var parentOrigin=null,picking=false,pins=[],host=null,root=null,outline=null,frame=0,observer=null,gen=0,lastUnanchored=null,checkTimer=0;
+  var parentOrigin=null,picking=false,pins=[],host=null,root=null,outline=null,frame=0,observer=null,gen=0,lastUnanchored=null,checkTimer=0,skipped=[],lastTops='';
   function send(type,data){if(!parentOrigin)return;var m=data||{};m.rc=1;m.type=type;window.parent.postMessage(m,parentOrigin)}
   function norm(v){return String(v||'').replace(/\s+/g,' ').trim()}
   function clamp(v){return Math.min(1,Math.max(0,Math.round(v*1000)/1000))}
@@ -102,6 +102,14 @@
       var r=p.el.getBoundingClientRect(),pt=p.point||{x:0,y:0},hidden=!p.el.isConnected||(r.width===0&&r.height===0);
       p.node.style.display=hidden?'none':'';p.node.style.left=(r.left+r.width*pt.x)+'px';p.node.style.top=(r.top+r.height*pt.y)+'px';
     });
+    // Tell the parent where each pin sits in this viewport so it can line up margin cards.
+    var tops=[];
+    pins.forEach(function(p){
+      if(!p.node||p.node.style.display==='none')return;
+      var y=Math.round(parseFloat(p.node.style.top));
+      if(y>=0&&y<=window.innerHeight)tops.push([p.n,y]);
+    });
+    var key=gen+':'+tops.join(';');if(key!==lastTops){lastTops=key;send('positions',{gen:gen,tops:tops})}
   }
   function schedule(){if(!frame)frame=requestAnimationFrame(place)}
   function pinNode(n,resolved){
@@ -115,16 +123,16 @@
     else{p.el=null;if(p.node){p.node.remove();p.node=null}}
   }
   function report(force){
-    var un=[];pins.forEach(function(p){if(!p.el)un.push(p.n)});
+    var un=skipped.slice();pins.forEach(function(p){if(!p.el)un.push(p.n)});
     var key=un.join(',');if(!force&&key===lastUnanchored)return;
     lastUnanchored=key;send('anchors',{gen:gen,unanchored:un});
   }
   function setPins(list){
     ensureHost();
-    pins.forEach(function(p){if(p.node)p.node.remove()});pins=[];
+    pins.forEach(function(p){if(p.node)p.node.remove()});pins=[];skipped=[];
     list.slice(0,500).forEach(function(p){
       var n=p&&p.n;if(!Number.isInteger(n)||n<=0)return;
-      var a=p.anchor;if(a&&typeof a.page==='string'&&a.page&&a.page!==page)return;
+      var a=p.anchor;if(a&&typeof a.page==='string'&&a.page&&a.page!==page){skipped.push(n);return}
       var pin={n:n,anchor:a,resolved:!!p.resolved,el:null,point:null,node:null};attach(pin);pins.push(pin);
     });
     place();report(true);

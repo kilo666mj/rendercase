@@ -180,7 +180,12 @@ Bridge → parent (target origin: the origin of the `enable` message, except
 - `anchors` — `{gen, unanchored: [n, ...]}` after placing pins, echoing the
   `gen` of the last `pins` message. The parent ignores an `anchors` whose `gen`
   is not its current one, and re-renders the sidebar only when the unanchored
-  set changes, so focus and open reply or edit forms survive.
+  set changes, so focus and open reply or edit forms survive. Anchors for
+  another page are reported here too, so the sidebar can list them.
+- `positions` — `{gen, tops: [[n, y], ...]}` with each visible pin's vertical
+  position in the frame viewport, sent after a placement pass when it changes.
+  Pins off screen are left out. The parent accepts only integer `n` within its
+  thread count and finite `y`, and uses them only to place its own cards.
 
 ### Behaviour
 
@@ -195,7 +200,7 @@ Bridge → parent (target origin: the origin of the `enable` message, except
   bridge-owned host element. Positions update on scroll and resize via
   `requestAnimationFrame`.
 - Pins for anchors whose `page` differs from the current page are skipped:
-  not drawn and not reported unanchored.
+  not drawn, and reported in `anchors` so they list with unanchored threads.
 - DOM mutations (other than the bridge re-appending its own host) schedule a
   check at most every 250 ms. It re-appends the host if the artifact removed
   it, retries pins that are unanchored or whose element left the document,
@@ -272,7 +277,14 @@ All routes are on the management origin behind `requireUser`.
   earlier versions show a `vN` tag, and their anchors are included in `pins`
   so they re-attach to the current version when possible. Anchors with a
   `page` show the page name as a tag.
-- Unanchored threads list under an **Unanchored** heading.
+- On wide screens, pinned threads are margin cards level with their pins and
+  pushed down so they never overlap, following `positions` as the artifact
+  scrolls. Cards whose pins are off screen are hidden behind a count. Below
+  760px, or before the bridge is ready, threads list in normal flow.
+- Whole-version, unanchored and other-page threads list under **Other
+  comments**.
+- Pins show as soon as the page loads, and the sidebar opens on load when the
+  version has open threads.
 - All user content is rendered with `textContent`; times use
   `toLocaleString`, as in the sharing dialog.
 
