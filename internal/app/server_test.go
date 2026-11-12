@@ -51,7 +51,7 @@ func TestViewerShowsSharingControlsOnlyToOwner(t *testing.T) {
 	if err := tpl.ExecuteTemplate(&rendered, "viewer", data); err != nil {
 		t.Fatal(err)
 	}
-	for _, wanted := range []string{`stroke="currentColor"`, `fill="var(--accent)"`, `id="share-open"`, `id="share-dialog"`, `data-artifact="a_example"`, `Manage sharing`, `Who can open this artifact?`, `Private — only you`, `All accounts — anyone signed in`, `value="authenticated" selected`, `PUBLIC LINKS · NO ACCOUNT REQUIRED`, `src="/static/viewer.js"`, `Create a public link`, `Create public link for version 3`} {
+	for _, wanted := range []string{`stroke="currentColor"`, `fill="var(--accent)"`, `id="share-open"`, `id="share-dialog"`, `data-artifact="a_example"`, `Manage sharing`, `Who can open this artifact?`, `Private — only you`, `All accounts — anyone signed in`, `value="authenticated" selected`, `PUBLIC LINKS · NO ACCOUNT REQUIRED`, `src="/static/viewer.js"`, `src="/static/nav.js"`, `Create a public link`, `Create public link for version 3`} {
 		if !strings.Contains(rendered.String(), wanted) {
 			t.Errorf("owner viewer missing %q", wanted)
 		}
@@ -452,5 +452,32 @@ func TestCommentsScriptRoute(t *testing.T) {
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "https://rendercase.example/static/comments.js", nil))
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "text/javascript; charset=utf-8" {
 		t.Fatalf("comments.js: %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+}
+
+func TestNavScriptOnlyOpensArtifactsFromItsFrame(t *testing.T) {
+	source, err := webFS.ReadFile("web/nav.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, forbidden := range []string{"innerHTML", "eval(", "window.open", "location.href=m", "assign(m."} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("nav.js contains %q", forbidden)
+		}
+	}
+	for _, required := range []string{"e.source!==frame.contentWindow", "e.origin!=='null'&&e.origin!==contentOrigin", "!navigator.userActivation.isActive", "/^a_[a-z0-9]{1,64}$/.test(m.artifact)", "location.assign('/a/'+m.artifact)"} {
+		if !strings.Contains(text, required) {
+			t.Errorf("nav.js missing %q", required)
+		}
+	}
+	s := &Server{cfg: config.Config{
+		PublicURL:  mustParseURL(t, "https://rendercase.example/"),
+		ContentURL: mustParseURL(t, "https://content.rendercase.example/"),
+	}, mcp: http.NotFoundHandler()}
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "https://rendercase.example/static/nav.js", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "text/javascript; charset=utf-8" {
+		t.Fatalf("nav.js: %d %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
 }

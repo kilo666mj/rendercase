@@ -124,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 	mainMux.HandleFunc("GET /static/viewer.js", staticWebFile("web/viewer.js", "text/javascript; charset=utf-8"))
 	mainMux.HandleFunc("GET /static/admin.js", staticWebFile("web/admin.js", "text/javascript; charset=utf-8"))
 	mainMux.HandleFunc("GET /static/comments.js", staticWebFile("web/comments.js", "text/javascript; charset=utf-8"))
+	mainMux.HandleFunc("GET /static/nav.js", staticWebFile("web/nav.js", "text/javascript; charset=utf-8"))
 	mainMux.HandleFunc("GET /auth/login", s.login)
 	mainMux.HandleFunc("GET /api/v1/auth/oidc/callback", s.callback)
 	mainMux.Handle("POST /auth/logout", s.requireUser(http.HandlerFunc(s.logout)))

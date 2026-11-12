@@ -285,6 +285,22 @@ Agents read feedback with `rendercase_list_comments`, reply with
 API is under `/api/v1/artifacts/{artifact}/threads`, `/api/v1/threads/{thread}`,
 and `/api/v1/comments/{comment}`.
 
+## Links between artifacts
+
+Artifact frames are sandboxed and cannot navigate the viewer, so a plain link to
+another artifact does nothing. To open one, an artifact posts a message to its
+parent:
+
+```html
+<a href="/a/a_example" onclick="parent.postMessage({rc:1,type:'open',artifact:'a_example'},'*');return false">Example</a>
+```
+
+The viewer accepts the message only from its own frame and only for an ID of
+the form `a_` plus lowercase letters and digits, and only right after the reader
+clicks or presses a key in the artifact, then navigates to that artifact's
+viewer page, where the usual access check applies. That page needs a signed-in
+account, so these links do not work for someone reading through a public link.
+
 ## Connect an MCP client
 
 The MCP endpoint is `/mcp`. OAuth protected-resource metadata is published at
@@ -439,6 +455,8 @@ Durations use Go syntax such as `30m`, `12h`, or `168h`. See
 - The comment bridge is injected only into signed-in views. Messages from the
   artifact frame are validated as untrusted input, and the frame never receives
   comment bodies or author identities.
+- An artifact can ask the viewer to open another artifact, but only this site's
+  own `/a/{artifact}` page; the frame still cannot navigate or open windows.
 - Expired sessions, states, uploads, abandoned files, and old audit events are
   removed by periodic maintenance.
 
