@@ -30,6 +30,9 @@ them into one unlabeled diagram.
 - Wrap long identifiers and constrain wide tables in an overflow container.
 - Avoid tiny diagram text and fixed-width desktop-only canvases.
 - Keep printing usable with a simple `@media print` rule.
+- Artifacts run in a sandboxed frame, so plain links to other artifacts do
+  nothing. Link with `parent.postMessage({rc:1,type:'open',artifact:'a_…'},'*')`
+  on click (README: Links between artifacts). External links can't be opened.
 
 ## Design-system selection
 

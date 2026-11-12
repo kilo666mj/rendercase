@@ -5,7 +5,7 @@
 <body><main class="shell artifact-shell">
   <header class="top">{{template "brand" .}}{{if .User}}<div class="session">{{.User.DisplayName}}<form class="inline" method="post" action="/auth/logout"><button class="link-button" type="submit">Sign out</button></form></div>{{end}}</header>
   <section class="viewer-head"><div><span class="eyebrow">ARTIFACT · VERSION {{.Version.Version}}</span><h1>{{.Version.Title}}</h1></div>{{if or .CanShare .Comments}}<div class="viewer-actions">{{if .Comments}}<button class="button" id="comments-open" type="button" aria-controls="comments-panel" aria-expanded="false">Comments <span id="comments-count">0</span></button>{{end}}{{if .CanShare}}<button class="button" id="share-open" type="button">Manage sharing</button>{{end}}</div>{{end}}</section>
-  <div class="viewer-body"><iframe class="viewer" title="{{.Version.Title}}" sandbox="allow-scripts allow-forms allow-downloads" referrerpolicy="no-referrer" src="{{.ContentSource}}"></iframe>{{if .Comments}}
+  <div class="viewer-body"><iframe class="viewer" title="{{.Version.Title}}" data-content-origin="{{.ContentOrigin}}" sandbox="allow-scripts allow-forms allow-downloads" referrerpolicy="no-referrer" src="{{.ContentSource}}"></iframe>{{if .Comments}}
   <aside class="comments-panel hidden" id="comments-panel" data-artifact="{{.Version.ArtifactID}}" data-version="{{.Version.Version}}" data-content-origin="{{.ContentOrigin}}" aria-label="Comments">
     <div class="comments-head"><h2>Comments</h2><button class="icon-button" id="comments-close" type="button" aria-label="Close comments">&times;</button></div>
     <div class="comments-tools"><button class="button" id="comment-pick" type="button" aria-pressed="false">Add comment</button><button class="link-button" id="comment-general" type="button">Comment on whole version</button></div>
@@ -36,5 +36,5 @@
   <div class="share-result hidden" id="share-result"><span class="eyebrow">NEW LINK · SHOWN ONCE</span><div class="share-result-row"><input id="share-url" readonly aria-label="Share URL"><button class="button" id="share-copy" type="button">Copy</button></div></div>
   <div class="share-list-wrap"><h3>Existing public links</h3><p class="session">For security, existing capability URLs cannot be recovered. You can revoke them and create a replacement.</p><div class="share-list" id="share-list"><span class="session">Loading…</span></div></div>
 </div></dialog>
-<script src="/static/viewer.js" defer></script>{{end}}{{if .Comments}}<script src="/static/comments.js" defer></script>{{end}}</body></html>
+<script src="/static/viewer.js" defer></script>{{end}}<script src="/static/nav.js" defer></script>{{if .Comments}}<script src="/static/comments.js" defer></script>{{end}}</body></html>
 {{end}}
