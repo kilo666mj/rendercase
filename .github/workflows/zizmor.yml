@@ -1,0 +1,27 @@
+name: zizmor
+
+# GitHub Actions security lint. Config and suppressions: .github/zizmor.yml.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: zizmor-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zizmor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Offline: online audits need a token and network access the lint does not otherwise use.
+      - run: pipx run zizmor==1.32.0 --offline --min-severity=low --format=github .
