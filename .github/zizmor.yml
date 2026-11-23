@@ -1,0 +1,8 @@
+# zizmor config. Every suppression here and every inline
+# `# zizmor: ignore[...]` comment states its reason.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # Every action, first-party ones included, must be pinned to a commit SHA.
+        "*": hash-pin

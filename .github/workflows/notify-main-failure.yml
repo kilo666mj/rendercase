@@ -5,7 +5,7 @@ name: notify main failure
 # on gatehub's main for four days and silently blocked every open Renovate PR.
 
 on:
-  workflow_run:
+  workflow_run: # zizmor: ignore[dangerous-triggers] files and closes CI-failure issues via the API only: no checkout, no code from the triggering run, main branch only
     # workflow_run requires an explicit list; it has no "all workflows" form.
     # These are this repository's own committed workflows. CodeQL default setup
     # is a dynamic workflow and cannot be named here.

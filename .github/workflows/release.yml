@@ -32,10 +32,12 @@ jobs:
       RENDERCASE_TEST_DATABASE_URL: postgres://postgres:test-password@localhost:5432/postgres?sslmode=disable
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: "1.27.4"
-          cache: true
+          cache: true # zizmor: ignore[cache-poisoning] this job only lints and tests and publishes nothing; the release job builds without the cache
       - name: Lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
@@ -65,6 +67,8 @@ jobs:
       RENDERCASE_OAUTH_AUDIENCE: https://rendercase.example.com/mcp
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Start PostgreSQL from compose.yaml on a fresh volume
         run: docker compose up -d --wait --wait-timeout 120 postgres
       - name: Check server version and data directory
@@ -89,6 +93,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - name: Set up Buildx
@@ -128,10 +134,12 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: "1.27.4"
-          cache: true
+          cache: false # release binaries are built without a restored cache
       - name: Build static Linux binaries
         env:
           CGO_ENABLED: "0"
